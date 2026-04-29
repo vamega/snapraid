@@ -185,12 +185,18 @@ static int sysattr_vpd_pg80(const char* path, char* dst, size_t dst_size)
 	int ret = sysread(path, (char*)buf, sizeof(buf));
 
 	/* need at least the header */
-	if (ret < 4)
+	if (ret < 4) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/* validate page code */
-	if (buf[1] != 0x80)
+	if (buf[1] != 0x80) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/* clamp to what was actually read */
 	size_t page_len = buf[3];
@@ -199,20 +205,29 @@ static int sysattr_vpd_pg80(const char* path, char* dst, size_t dst_size)
 		page_len = available;
 
 	/* if empty */
-	if (page_len == 0)
+	if (page_len == 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/* if too bit to store the 0 termination */
-	if (4 + page_len + 1 > sizeof(buf))
+	if (4 + page_len + 1 > sizeof(buf)) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	char* attr = (char*)buf + 4;
 	attr[page_len] = 0;
 	strtrim(attr);
 
 	/* if empty */
-	if (!*attr)
+	if (!*attr) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	pathcpy(dst, dst_size, attr);
 	return 0;
@@ -269,12 +284,18 @@ static int sysattr_vpd_pg83(const char* path, char* dst, size_t dst_size)
 	unsigned char buf[4096];
 
 	int ret = sysread(path, (char*)buf, sizeof(buf));
-	if (ret < 4)
+	if (ret < 4) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/* validate page code */
-	if (buf[1] != 0x83)
+	if (buf[1] != 0x83) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	size_t page_len = ((size_t)buf[2] << 8) | buf[3];
 
@@ -284,8 +305,11 @@ static int sysattr_vpd_pg83(const char* path, char* dst, size_t dst_size)
 		page_len = available;
 
 	/* if empty */
-	if (page_len == 0)
+	if (page_len == 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/*
 	 * Walk every Designation Descriptor looking for the first NAA descriptor
@@ -429,29 +453,40 @@ static int devdereference(uint64_t device, const char* dir, tommy_list* devlist)
 		struct statfs sfs;
 
 		int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-		if (fd < 0)
+		if (fd < 0) {
+			/* LCOV_EXCL_START */
 			return -1;
+			/* LCOV_EXCL_STOP */
+		}
 
 		if (fstatfs(fd, &sfs) != 0) {
+			/* LCOV_EXCL_START */
 			close(fd);
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		if (sfs.f_type != BTRFS_SUPER_MAGIC) {
+			/* LCOV_EXCL_START */
 			close(fd);
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		struct btrfs_ioctl_fs_info_args fs_info;
 		memset(&fs_info, 0, sizeof(fs_info));
 		if (ioctl(fd, BTRFS_IOC_FS_INFO, &fs_info) < 0) {
+			/* LCOV_EXCL_START */
 			close(fd);
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		if (fs_info.max_id == 0) {
+			/* LCOV_EXCL_START */
 			close(fd);
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		for (__u64 i = 1; i <= fs_info.max_id; ++i) {
@@ -460,15 +495,19 @@ static int devdereference(uint64_t device, const char* dir, tommy_list* devlist)
 			dev_info.devid = i;
 
 			if (ioctl(fd, BTRFS_IOC_DEV_INFO, &dev_info) != 0) {
+				/* LCOV_EXCL_START */
 				close(fd);
 				return -1;
+				/* LCOV_EXCL_STOP */
 			}
 
 			/* get major:minor, use stat on the path returned */
 			struct stat st;
 			if (stat((char*)dev_info.path, &st) != 0) {
+				/* LCOV_EXCL_START */
 				close(fd);
 				return -1;
+				/* LCOV_EXCL_STOP */
 			}
 
 			struct dev_struct* dev = malloc_nofail(sizeof(struct dev_struct));
@@ -653,15 +692,19 @@ static int devuuid_dev(uint64_t device, char* uuid, size_t uuid_size)
 	/* scan the UUID directory searching for the device */
 	d = opendir("/dev/disk/by-uuid");
 	if (!d) {
+		/* LCOV_EXCL_START */
 		log_tag("uuid:by-uuid:%u:%u: opendir(/dev/disk/by-uuid) failed, %s\n", major(device), minor(device), strerror(errno));
 		/* directory missing?, likely we are not in Linux */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	int dir_fd = dirfd(d);
 	if (dir_fd == -1) {
+		/* LCOV_EXCL_START */
 		log_tag("uuid:by-uuid:%u:%u: dirfd(/dev/disk/by-uuid) failed, %s\n", major(device), minor(device), strerror(errno));
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	while ((dd = readdir(d)) != 0) {
@@ -671,9 +714,11 @@ static int devuuid_dev(uint64_t device, char* uuid, size_t uuid_size)
 
 		ret = fstatat(dir_fd, dd->d_name, &st, 0);
 		if (ret != 0) {
+			/* LCOV_EXCL_START */
 			log_tag("uuid:by-uuid:%u:%u: fstatat(%s) failed, %s\n", major(device), minor(device), dd->d_name, strerror(errno));
 			/* generic error, ignore and continue the search */
 			continue;
+			/* LCOV_EXCL_STOP */
 		}
 
 		/* if it matches, we have the uuid */
@@ -685,9 +730,11 @@ static int devuuid_dev(uint64_t device, char* uuid, size_t uuid_size)
 			pathprint(path, sizeof(path), "/dev/disk/by-uuid/%s", dd->d_name);
 			ret = readlink(path, buf, sizeof(buf));
 			if (ret < 0 || ret >= PATH_MAX) {
+				/* LCOV_EXCL_START */
 				log_tag("uuid:by-uuid:%u:%u: readlink(/dev/disk/by-uuid/%s) failed, %s\n", major(device), minor(device), dd->d_name, strerror(errno));
 				/* generic error, ignore and continue the search */
 				continue;
+				/* LCOV_EXCL_STOP */
 			}
 			buf[ret] = 0;
 
@@ -725,17 +772,21 @@ static int devuuid_blkid(uint64_t device, char* uuid, size_t uuid_size)
 
 	devname = blkid_devno_to_devname(device);
 	if (!devname) {
+		/* LCOV_EXCL_START */
 		log_tag("uuid:blkid:%u:%u: blkid_devno_to_devname() failed, %s\n", major(device), minor(device), strerror(errno));
 		/* device mapping failed */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	uuidname = blkid_get_tag_value(cache, "UUID", devname);
 	if (!uuidname) {
+		/* LCOV_EXCL_START */
 		log_tag("uuid:blkid:%u:%u: blkid_get_tag_value(UUID,%s) failed, %s\n", major(device), minor(device), devname, strerror(errno));
 		/* uuid mapping failed */
 		free(devname);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	pathcpy(uuid, uuid_size, uuidname);
@@ -762,17 +813,21 @@ static int devuuid_label(uint64_t device, char* label, size_t label_size)
 
 	devname = blkid_devno_to_devname(device);
 	if (!devname) {
+		/* LCOV_EXCL_START */
 		log_tag("label:blkid:%u:%u: blkid_devno_to_devname() failed, %s\n", major(device), minor(device), strerror(errno));
 		/* device mapping failed */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	labelname = blkid_get_tag_value(cache, "LABEL", devname);
 	if (!labelname) {
+		/* LCOV_EXCL_START */
 		log_tag("label:blkid:%u:%u: blkid_get_tag_value(LABEL,%s) failed, %s\n", major(device), minor(device), devname, strerror(errno));
 		free(devname);
 		/* label mapping failed */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	pathcpy(label, label_size, labelname);
@@ -874,12 +929,17 @@ static int devuuid_btrfs(uint64_t device, const char* dir, char* uuid, size_t uu
 	struct statfs sfs;
 
 	int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (fd < 0)
+	if (fd < 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP*/
+	}
 
 	if (fstatfs(fd, &sfs) != 0) {
+		/* LCOV_EXCL_START */
 		close(fd);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	if (sfs.f_type != BTRFS_SUPER_MAGIC) {
@@ -890,8 +950,10 @@ static int devuuid_btrfs(uint64_t device, const char* dir, char* uuid, size_t uu
 	struct btrfs_ioctl_fs_info_args info;
 	memset(&info, 0, sizeof(info));
 	if (ioctl(fd, BTRFS_IOC_FS_INFO, &info) < 0) {
+		/* LCOV_EXCL_START */
 		close(fd);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	snprintf(uuid, uuid_size,
@@ -965,7 +1027,9 @@ int filephy(const char* path, uint64_t size, uint64_t* physical)
 
 	f = open(path, O_RDONLY);
 	if (f == -1) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	/*
@@ -1266,7 +1330,9 @@ int fsinfo(const char* path, int* has_persistent_inode, int* has_syncronized_har
 		char* slash;
 
 		if (errno != ENOENT) {
+			/* LCOV_EXCL_START */
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		/*
@@ -1274,19 +1340,27 @@ int fsinfo(const char* path, int* has_persistent_inode, int* has_syncronized_har
 		 * and we check for the containing dir
 		 */
 		if (strlen(path) + 1 > sizeof(dir)) {
+			/* LCOV_EXCL_START */
 			errno = ENAMETOOLONG;
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		strcpy(dir, path);
 
 		slash = strrchr(dir, '/');
-		if (!slash)
+		if (!slash) {
+			/* LCOV_EXCL_START */
 			return -1;
+			/* LCOV_EXCL_STOP */
+		}
 
 		*slash = 0;
-		if (statfs(dir, &st) != 0)
+		if (statfs(dir, &st) != 0) {
+			/* LCOV_EXCL_START */
 			return -1;
+			/* LCOV_EXCL_STOP */
+		}
 	}
 #endif
 
@@ -1391,8 +1465,10 @@ int fssnapshot(const char* path, char* root, size_t root_size)
 	pathcpy(current_path, sizeof(current_path), path);
 
 	if (statfs(current_path, &sfs) != 0) {
+		/* LCOV_EXCL_START */
 		log_error(errno, "Error stating filesystem '%s'. %s.\n", current_path, strerror(errno));
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	/* only btrfs */
@@ -1402,8 +1478,10 @@ int fssnapshot(const char* path, char* root, size_t root_size)
 	/* walk up the directory tree to find the subvolume root (Inode 256) */
 	while (1) {
 		if (stat(current_path, &st) != 0) {
+			/* LCOV_EXCL_START */
 			log_error(errno, "Error stating '%s'. %s.\n", current_path, strerror(errno));
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 
 		/* btrfs reserved inode 256 for subvolume roots */
@@ -1417,8 +1495,10 @@ int fssnapshot(const char* path, char* root, size_t root_size)
 		pathup(current_path);
 
 		if (current_path[0] == 0) {
+			/* LCOV_EXCL_START */
 			log_error(ENOENT, "No subvolume root found for '%s'. %s.\n", path, strerror(errno));
 			return -1;
+			/* LCOV_EXCL_STOP */
 		}
 	}
 #else
@@ -1440,13 +1520,17 @@ int fssnapshot_create(const char* source, const char* parent_dir, const char* na
 	/* open the source subvolume to get a file descriptor */
 	fd_source = open(source, O_RDONLY | O_DIRECTORY);
 	if (fd_source < 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	fd_dest_parent = open(parent_dir, O_RDONLY | O_DIRECTORY);
 	if (fd_dest_parent < 0) {
+		/* LCOV_EXCL_START */
 		close(fd_source);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	memset(&args, 0, sizeof(args));
@@ -1456,11 +1540,12 @@ int fssnapshot_create(const char* source, const char* parent_dir, const char* na
 
 	/* issue the snapshot command to the PARENT directory of the destination */
 	ret = ioctl(fd_dest_parent, BTRFS_IOC_SNAP_CREATE_V2, &args);
-
 	if (ret < 0) {
+		/* LCOV_EXCL_START */
 		close(fd_source);
 		close(fd_dest_parent);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	close(fd_source);
@@ -1484,7 +1569,9 @@ int fssnapshot_delete(const char* parent_dir, const char* name)
 
 	fd_parent = open(parent_dir, O_RDONLY | O_DIRECTORY);
 	if (fd_parent < 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	memset(&args, 0, sizeof(args));
@@ -1493,8 +1580,10 @@ int fssnapshot_delete(const char* parent_dir, const char* name)
 	ret = ioctl(fd_parent, BTRFS_IOC_SNAP_DESTROY, &args);
 
 	if (ret < 0 && errno != ENOENT) {
+		/* LCOV_EXCL_START */
 		close(fd_parent);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
 	close(fd_parent);
@@ -1519,46 +1608,17 @@ int fssnapshot_rename(const char* parent_dir, const char* old_name, const char* 
 	pathcatc(new_path, sizeof(new_path), '/');
 	pathcat(new_path, sizeof(new_path), new_name);
 
-	if (rename(old_path, new_path) < 0)
+	if (rename(old_path, new_path) < 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	return 0;
 #else
 	(void)parent_dir;
 	(void)old_name;
 	(void)new_name;
-	return -1;
-#endif
-}
-
-int fssnapshot_clone(const char* source, const char* dest)
-{
-#if HAVE_LINUX_DEVICE
-	int fs, fd;
-
-	fs = open(source, O_RDONLY);
-	if (fs < 0)
-		return -1;
-
-	fd = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	if (fd < 0) {
-		close(fs);
-		return 1;
-	}
-
-	/* perform the reflink copy */
-	if (ioctl(fd, FICLONE, fs) < 0) {
-		close(fd);
-		close(fs);
-		return -1;
-	}
-
-	close(fs);
-	close(fd);
-	return 0;
-#else
-	(void)source;
-	(void)dest;
 	return -1;
 #endif
 }
@@ -1578,7 +1638,9 @@ uint64_t os_tick(void)
 #else
 	if (clock_gettime(CLOCK_MONOTONIC, &tv) != 0) {
 #endif
+		/* LCOV_EXCL_START */
 		return 0;
+		/* LCOV_EXCL_STOP */
 	}
 
 	return tv.tv_sec * 1000000000ULL + tv.tv_nsec;
@@ -1588,7 +1650,9 @@ uint64_t os_tick(void)
 
 	/* microsecond precision with gettimeofday() */
 	if (gettimeofday(&tv, 0) != 0) {
+		/* LCOV_EXCL_START */
 		return 0;
+		/* LCOV_EXCL_STOP */
 	}
 
 	return tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1599,8 +1663,11 @@ uint64_t os_tick_ms(void)
 {
 	struct timeval tv;
 
-	if (gettimeofday(&tv, 0) != 0)
+	if (gettimeofday(&tv, 0) != 0) {
+		/* LCOV_EXCL_START */
 		return 0;
+		/* LCOV_EXCL_STOP */
+	}
 
 	return tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
 }
@@ -1611,17 +1678,25 @@ int randomize(void* ptr, size_t size)
 	ssize_t ret;
 
 	f = open("/dev/urandom", O_RDONLY);
-	if (f == -1)
+	if (f == -1) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	ret = read(f, ptr, size);
 	if (ret < 0 || (size_t)ret != size) {
+		/* LCOV_EXCL_START */
 		close(f);
 		return -1;
+		/* LCOV_EXCL_STOP */
 	}
 
-	if (close(f) != 0)
+	if (close(f) != 0) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	return 0;
 }
@@ -1841,8 +1916,11 @@ static int devstat(dev_t device, uint64_t* count)
 		*i++ = 0; /* put a terminator */
 
 		v = strtoull(n, &e, 10);
-		if (*e != 0)
+		if (*e != 0) {
+			/* LCOV_EXCL_START */
 			break;
+			/* LCOV_EXCL_STOP */
+		}
 
 		/* sum reads and writes completed */
 		if (token == 1 || token == 5) {
@@ -2732,8 +2810,11 @@ int ambient_temperature(void)
 	int lowest_temp = 0;
 
 	dir = opendir("/sys/class/hwmon");
-	if (!dir)
+	if (!dir) {
+		/* LCOV_EXCL_START */
 		return 0;
+		/* LCOV_EXCL_STOP */
+	}
 
 	/* iterate through hwmon devices */
 	while ((entry = readdir(dir)) != NULL) {
@@ -2748,8 +2829,11 @@ int ambient_temperature(void)
 
 		/* iterate through temp*_input files */
 		hwmon_dir = opendir(path);
-		if (!hwmon_dir)
+		if (!hwmon_dir) {
+			/* LCOV_EXCL_START */
 			continue;
+			/* LCOV_EXCL_STOP */
+		}
 
 		while ((hwmon_entry = readdir(hwmon_dir)) != NULL) {
 			char value[128];
@@ -2763,8 +2847,11 @@ int ambient_temperature(void)
 				continue;
 
 			dash = strrchr(hwmon_entry->d_name, '_');
-			if (dash == 0)
+			if (dash == 0) {
+				/* LCOV_EXCL_START */
 				continue;
+				/* LCOV_EXCL_STOP */
+			}
 
 			if (strcmp(dash, "_input") != 0)
 				continue;
@@ -2772,12 +2859,18 @@ int ambient_temperature(void)
 			/* read the temperature */
 			pathprint(path, sizeof(path), "/sys/class/hwmon/%s/%s", entry->d_name, hwmon_entry->d_name);
 
-			if (sysattr(path, value, sizeof(value)) != 0)
+			if (sysattr(path, value, sizeof(value)) != 0) {
+				/* LCOV_EXCL_START */
 				continue;
+				/* LCOV_EXCL_STOP */
+			}
 
 			temp = strtol(value, &e, 10) / 1000;
-			if (*e != 0 && !isspace(*e))
+			if (*e != 0 && !isspace(*e)) {
+				/* LCOV_EXCL_START */
 				continue;
+				/* LCOV_EXCL_STOP */
+			}
 
 			/* cut the file name at "_input" */
 			*dash = 0;
@@ -2785,15 +2878,19 @@ int ambient_temperature(void)
 			/* read the corresponding name */
 			pathprint(path, sizeof(path), "/sys/class/hwmon/%s/name", entry->d_name);
 			if (sysattr(path, name, sizeof(name)) != 0) {
+				/* LCOV_EXCL_START */
 				/* fallback to using the hwmon name */
 				pathcpy(name, sizeof(name), entry->d_name);
+				/* LCOV_EXCL_STOP */
 			}
 
 			/* read the corresponding label file */
 			pathprint(path, sizeof(path), "/sys/class/hwmon/%s/%s_label", entry->d_name, hwmon_entry->d_name);
 			if (sysattr(path, label, sizeof(label)) != 0) {
+				/* LCOV_EXCL_START */
 				/* fallback to using the temp* name (e.g., temp1, temp2) */
 				pathcpy(label, sizeof(label), hwmon_entry->d_name);
+				/* LCOV_EXCL_STOP */
 			}
 
 			log_tag("thermal:ambient:device:%s:%s:%s:%s:%ld\n", entry->d_name, name, hwmon_entry->d_name, label, temp);
@@ -2843,8 +2940,11 @@ int devmap(void)
 	char esc_buffer[ESC_MAX];
 	char path[PATH_MAX];
 	DIR* d = opendir("/sys/block");
-	if (!d)
+	if (!d) {
+		/* LCOV_EXCL_START */
 		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	struct dirent* dd;
 	while (1) {

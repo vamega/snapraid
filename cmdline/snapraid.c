@@ -966,6 +966,7 @@ void signal_init(void)
 #define OPERATION_SMART 17
 #define OPERATION_PROBE 18
 #define OPERATION_LOCATE 19
+#define OPERATION_SPINDOWNIFUP 20
 
 int snapraid_main(int argc, char* argv[])
 {
@@ -1521,6 +1522,8 @@ int snapraid_main(int argc, char* argv[])
 		operation = OPERATION_SPINUP;
 	} else if (strcmp(argv[optind], "down") == 0) {
 		operation = OPERATION_SPINDOWN;
+	} else if (strcmp(argv[optind], "test-downifup") == 0) {
+		operation = OPERATION_SPINDOWNIFUP;
 	} else if (strcmp(argv[optind], "devices") == 0) {
 		operation = OPERATION_DEVICES;
 	} else if (strcmp(argv[optind], "smart") == 0) {
@@ -1557,6 +1560,7 @@ int snapraid_main(int argc, char* argv[])
 	case OPERATION_DEVICES :
 	case OPERATION_SPINUP :
 	case OPERATION_SPINDOWN :
+	case OPERATION_SPINDOWNIFUP :
 		break;
 	default :
 		if (opt.force_device) {
@@ -1650,6 +1654,7 @@ int snapraid_main(int argc, char* argv[])
 	/* fallthrough */
 	case OPERATION_SPINUP :
 	case OPERATION_SPINDOWN :
+	case OPERATION_SPINDOWNIFUP :
 		if (!tommy_list_empty(&filterlist_file)) {
 			/* LCOV_EXCL_START */
 			log_fatal(EUSER, "You cannot use -f, --filter with the '%s' command\n", command);
@@ -1737,6 +1742,7 @@ int snapraid_main(int argc, char* argv[])
 	case OPERATION_TOUCH :
 	case OPERATION_SPINUP :
 	case OPERATION_SPINDOWN :
+	case OPERATION_SPINDOWNIFUP :
 	case OPERATION_DEVICES :
 	case OPERATION_SMART :
 	case OPERATION_PROBE :
@@ -1968,6 +1974,8 @@ int snapraid_main(int argc, char* argv[])
 		state_device(&state, DEVICE_UP, &filterlist_disk);
 	} else if (operation == OPERATION_SPINDOWN) {
 		state_device(&state, DEVICE_DOWN, &filterlist_disk);
+	} else if (operation == OPERATION_SPINDOWNIFUP) {
+		state_device(&state, DEVICE_DOWNIFUP, &filterlist_disk);
 	} else if (operation == OPERATION_DEVICES) {
 		state_device(&state, DEVICE_LIST, 0);
 	} else if (operation == OPERATION_SMART) {
