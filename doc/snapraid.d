@@ -1154,18 +1154,20 @@ Configuration
 	start of a 'sync'. This ensures a consistent, point-in-time view of your
 	files, preventing errors caused by concurrent file modifications.
 
-	This option applies exclusively to data disks formatted with the
-	Btrfs or Bcachefs filesystems. Parity disks, or data disks using
-	other filesystems, will always use the live version of the filesystem.
+	This option applies exclusively to data disks formatted with a supported
+	snapshot-capable filesystem. Parity disks, or data disks using other
+	filesystems, will always use the live version of the filesystem.
 
 	This significantly improves recovery: if a file is deleted from the live
 	filesystem, it remains preserved in the snapshot. This prevents the parity
 	from becoming "broken" for that block, ensuring you can still successfully
 	recover data if another disk fails.
 
-	Snapshots are stored in a hidden '.snapraid' directory at the root
-	of the subvolume containing your data. SnapRAID will automatically
-	detect the subvolume root for each data path.
+	At present, Btrfs, Bcachefs, and ZFS are supported. Btrfs and
+	Bcachefs snapshots are stored in a hidden '.snapraid' directory at the
+	root of the subvolume containing your data. ZFS snapshots are stored in
+	the dataset's native '.zfs/snapshot' directory. SnapRAID will
+	automatically detect the snapshot root for each data path.
 
 	Snapshot creation and deletion require administrative privileges.
 	Ensure SnapRAID is run with the necessary permissions (e.g., sudo) when
@@ -1445,9 +1447,8 @@ Snapshots
 
 	Snapshots are created only for data disks and only if the underlying
 	filesystem supports this functionality. Parity disks always use
-	the live filesystem.
-
-	At present, this is supported exclusively on Btrfs and Bcachefs.
+	the live filesystem. At present, this is supported on Btrfs, Bcachefs,
+	and ZFS.
 
 	You can mix data disks with different filesystems. Only those that
 	support snapshots will utilize them, while other disks will continue
