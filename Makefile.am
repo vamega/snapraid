@@ -349,7 +349,7 @@ snapcheck_run:
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) status
 # Destroy disk2
 	rm -rf bench/snap2/a bench/snap2/b
-# Recover disk2 (disk1 is intentionally deleted, so nothing to recover)
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) fix -d snap2 -l test.log
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) check
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync --force-full
@@ -362,22 +362,22 @@ snapcheck_run:
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) status
 # Destroy disk2
 	rm -rf bench/snap2/a bench/snap2/b
-# Recover disk2 (disk1 is intentionally deleted, so nothing to recover)
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) fix -d snap2 -l test.log
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) check
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync --force-full
 # Sync recover
 	$(MSG) Sync recover aborted AFTER
-# Change files in disk3
-	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/snap3/a/*
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/snap1/a/*
 # Sync abort and sync retry
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync --test-kill-after-sync
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) check
 # Sync recover
 	$(MSG) Sync recover aborted BEFORE
-# Change files in disk3
-	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/snap3/a/*
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/snap1/b/*
 # Sync abort and sync retry
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync --test-kill-before-sync
 	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_SNAP) -c $(SNAP) sync
