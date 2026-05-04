@@ -150,6 +150,8 @@ EXTRA_DIST = \
 	$(LIST_MAN) \
 	$(LIST_TXT) \
 	test/test-snap.conf \
+	test/test-bcachefs.conf \
+	test/test-zfs.conf \
 	test/test-par1.conf \
 	test/test-par2.conf \
 	test/test-par3.conf \
@@ -265,6 +267,8 @@ CHECKFLAGS = $(CHECKFLAGS_ALPHA) -q -q -q
 
 # Snapshots with no parity limit
 CHECKFLAGS_SNAP = --test-skip-device --test-skip-self --test-io-advise-none --test-force-order-alpha -q -q -q
+CHECKFLAGS_BCACHEFS = --test-skip-device --test-skip-self --test-io-advise-none --test-force-order-alpha -q -q -q
+CHECKFLAGS_ZFS = --test-skip-device --test-skip-self --test-io-advise-none --test-force-order-alpha -q -q -q
 
 # Number of files to create
 if !HAVE_MEMORY_CHECKER
@@ -297,6 +301,8 @@ PAR4 = $(srcdir)/test/test-par4.conf
 PAR5 = $(srcdir)/test/test-par5.conf
 PAR6 = $(srcdir)/test/test-par6.conf
 SNAP = $(srcdir)/test/test-snap.conf
+BCACHEFS = $(srcdir)/test/test-bcachefs.conf
+ZFS = $(srcdir)/test/test-zfs.conf
 MSG = @echo =====
 
 setupcheck:
@@ -305,7 +311,7 @@ setupcheck:
 	mkdir bench
 
 # Not included in main check because it requires root permissions
-snapcheck: mktest setupcheck
+snapcheck: snapraid mktest setupcheck
 	sudo $(MAKE) snapcheck_run; \
 	status=$$?; \
 	sudo $(MAKE) snapcheck_cleanup; \
@@ -388,6 +394,200 @@ snapcheck_cleanup:
 	umount bench/snap1
 	umount bench/snap2
 	umount bench/snap3
+
+# Not included in main check because it requires root permissions and bcachefs support
+bcachefscheck: snapraid mktest setupcheck
+	sudo $(MAKE) bcachefscheck_run; \
+	status=$$?; \
+	sudo $(MAKE) bcachefscheck_cleanup; \
+	exit $$status
+
+bcachefscheck_run:
+	mkdir bench/bcachefs1
+	mkdir bench/bcachefs2
+	mkdir bench/bcachefs3
+	$(MSG) Create storages
+	dd bs=1048576 count=128 if=/dev/zero of=bench/bcachefs1.img
+	dd bs=1048576 count=128 if=/dev/zero of=bench/bcachefs2.img
+	dd bs=1048576 count=128 if=/dev/zero of=bench/bcachefs3.img
+	bcachefs format --force bench/bcachefs1.img
+	bcachefs format --force bench/bcachefs2.img
+	bcachefs format --force bench/bcachefs3.img
+	mount -o loop -t bcachefs bench/bcachefs1.img bench/bcachefs1
+	mount -o loop -t bcachefs bench/bcachefs2.img bench/bcachefs2
+	mount -o loop -t bcachefs bench/bcachefs3.img bench/bcachefs3
+	$(MSG) Create some files
+	$(TESTENV) ./mktest$(EXEEXT) generate 1 bcachefs 3 $(CHECKCOUNT) $(CHECKSIZE)
+	mkdir -p bench/bcachefs1/a bench/bcachefs1/b
+	echo uuid-move > bench/bcachefs1/a/uuid-move
+	$(MSG) Basic
+# Setup
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync
+	$(MSG) UUID based move detection
+	mv bench/bcachefs1/a/uuid-move bench/bcachefs1/b/uuid-move
+	rm -f test.log output.log
+	$(FAILENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) --test-expect-need-sync diff -l test.log > output.log
+	grep -q "scan:move:bcachefs1:a/uuid-move:b/uuid-move" test.log
+	! grep -q "UUID is unsupported" test.log
+	! grep -q "UUID is changed" test.log
+	! grep -q "Inodes are not used to detect move operations" test.log
+	! grep -q "Not using inodes to detect move operations" test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) scrub -p full
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check -d bcachefs1
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity OUTSIDE SYNC
+	rm -rf bench/bcachefs1/a
+	rm -rf bench/bcachefs2/a
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) fix -d bcachefs1 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) fix -d bcachefs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --force-full
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity aborted BEFORE SYNC
+# Changes (including deletion) on disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/bcachefs1/a/* bench/bcachefs1/b/*
+# Sync aborted BEFORE
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --test-kill-before-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) status
+# Destroy disk2
+	rm -rf bench/bcachefs2/a bench/bcachefs2/b
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) fix -d bcachefs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --force-full
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity aborted AFTER SYNC
+# Changes (including deletion) on disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 2 500 bench/bcachefs1/a/* bench/bcachefs1/b/*
+# Sync aborted AFTER
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --test-kill-after-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) status
+# Destroy disk2
+	rm -rf bench/bcachefs2/a bench/bcachefs2/b
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) fix -d bcachefs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --force-full
+# Sync recover
+	$(MSG) Sync recover aborted AFTER
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/bcachefs1/a/*
+# Sync abort and sync retry
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --test-kill-after-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check
+# Sync recover
+	$(MSG) Sync recover aborted BEFORE
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/bcachefs1/b/*
+# Sync abort and sync retry
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync --test-kill-before-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_BCACHEFS) -c $(BCACHEFS) check
+
+bcachefscheck_cleanup:
+	$(MSG) Unmount storages
+	umount bench/bcachefs1
+	umount bench/bcachefs2
+	umount bench/bcachefs3
+
+# Not included in main check because it requires root permissions and ZFS support
+zfscheck: snapraid mktest setupcheck
+	sudo $(MAKE) zfscheck_run; \
+	status=$$?; \
+	sudo $(MAKE) zfscheck_cleanup; \
+	exit $$status
+
+zfscheck_run:
+	mkdir bench/zfs1
+	mkdir bench/zfs2
+	mkdir bench/zfs3
+	$(MSG) Create storages
+	dd bs=1048576 count=128 if=/dev/zero of=bench/zfs1.img
+	dd bs=1048576 count=128 if=/dev/zero of=bench/zfs2.img
+	dd bs=1048576 count=128 if=/dev/zero of=bench/zfs3.img
+	zpool create -f -m $(CURDIR)/bench/zfs1 snapraid_zfs1 $(CURDIR)/bench/zfs1.img
+	zpool create -f -m $(CURDIR)/bench/zfs2 snapraid_zfs2 $(CURDIR)/bench/zfs2.img
+	zpool create -f -m $(CURDIR)/bench/zfs3 snapraid_zfs3 $(CURDIR)/bench/zfs3.img
+	zfs set snapdir=visible snapraid_zfs1
+	zfs set snapdir=visible snapraid_zfs2
+	zfs set snapdir=visible snapraid_zfs3
+	$(MSG) Create some files
+	$(TESTENV) ./mktest$(EXEEXT) generate 1 zfs 3 $(CHECKCOUNT) $(CHECKSIZE)
+	mkdir -p bench/zfs1/a bench/zfs1/b
+	echo uuid-move > bench/zfs1/a/uuid-move
+	$(MSG) Basic
+# Setup
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync
+	$(MSG) UUID based move detection
+	mv bench/zfs1/a/uuid-move bench/zfs1/b/uuid-move
+	rm -f test.log output.log
+	$(FAILENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) --test-expect-need-sync diff -l test.log > output.log
+	grep -q "scan:move:zfs1:a/uuid-move:b/uuid-move" test.log
+	! grep -q "UUID is unsupported" test.log
+	! grep -q "UUID is changed" test.log
+	! grep -q "Inodes are not used to detect move operations" test.log
+	! grep -q "Not using inodes to detect move operations" test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) scrub -p full
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check -d zfs1
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity OUTSIDE SYNC
+	rm -rf bench/zfs1/a
+	rm -rf bench/zfs2/a
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) fix -d zfs1 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) fix -d zfs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --force-full
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity aborted BEFORE SYNC
+# Changes (including deletion) on disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/zfs1/a/* bench/zfs1/b/*
+# Sync aborted BEFORE
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --test-kill-before-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) status
+# Destroy disk2
+	rm -rf bench/zfs2/a bench/zfs2/b
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) fix -d zfs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --force-full
+# Recover test
+	$(MSG) Recover with file deletions from two disk with ONLY one parity aborted AFTER SYNC
+# Changes (including deletion) on disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 2 500 bench/zfs1/a/* bench/zfs1/b/*
+# Sync aborted AFTER
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --test-kill-after-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) status
+# Destroy disk2
+	rm -rf bench/zfs2/a bench/zfs2/b
+# Recover disk2 (disk1 is intentionally modified, so nothing to recover)
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) fix -d zfs2 -l test.log
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --force-full
+# Sync recover
+	$(MSG) Sync recover aborted AFTER
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/zfs1/a/*
+# Sync abort and sync retry
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --test-kill-after-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check
+# Sync recover
+	$(MSG) Sync recover aborted BEFORE
+# Change files in disk1
+	$(TESTENV) ./mktest$(EXEEXT) change 1 500 bench/zfs1/b/*
+# Sync abort and sync retry
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync --test-kill-before-sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) sync
+	$(TESTENV) ./snapraid$(EXEEXT) $(CHECKFLAGS_ZFS) -c $(ZFS) check
+
+zfscheck_cleanup:
+	$(MSG) Destroy storages
+	-zpool destroy -f snapraid_zfs1
+	-zpool destroy -f snapraid_zfs2
+	-zpool destroy -f snapraid_zfs3
 
 check-local: setupcheck
 	mkdir bench/disk1
