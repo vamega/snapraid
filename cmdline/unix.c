@@ -1323,7 +1323,6 @@ static int devuuid_bcachefs(uint64_t device, const char* dir, char* uuid, size_t
 		return -1;
 		/* LCOV_EXCL_STOP */
 	}
-	close(fd);
 
 	snprintf(uuid, uuid_size,
 		"%02x%02x%02x%02x-"
