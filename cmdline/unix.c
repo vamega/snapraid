@@ -7,6 +7,112 @@
 
 #include "support.h"
 
+#if HAVE_LINUX_DEVICE
+/**
+ * Validates a string for shell metacharacters.
+ * Returns -1 if dangerous characters are detected, 0 otherwise.
+ */
+static int validate_shell_input(const char* str)
+{
+	/*
+	 * Define characters that can be used to inject commands or alter logic
+	 * Includes: ; | & $ > < ` ' " ( ) [ * ? \ ~ and whitespace
+	 */
+	const char* danger_chars = ";|&$><`'\"()[]*?\\~\r\n ";
+
+	/* check for any of the forbidden characters */
+	if (strpbrk(str, danger_chars) != 0)
+		return -1;
+
+	/* check if the string starts with a hyphen to prevent flag injection */
+	if (str[0] == '-')
+		return -1;
+
+	return 0;
+}
+
+/**
+ * Validates a string for exec.
+ * Returns -1 if dangerous characters are detected, 0 otherwise.
+ */
+static int validate_exec_input(const char* str)
+{
+	/* reject paths trying to go up levels */
+	if (strstr(str, "..") != 0)
+		return -1;
+
+	/* reject inputs starting with '-' to prevent Flag Injection */
+	if (str[0] == '-')
+		return -1;
+
+	return 0;
+}
+
+
+/*
+ * Scrubbed environment
+ * Only provide the bare essentials.
+ */
+static char* const envp_scrubbed[] = {
+	"PATH="
+#ifdef __APPLE__
+	"/opt/homebrew/bin:"
+#endif
+	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	"TERM=dumb",
+	"LANG=C",
+	"IFS= \t\n",
+	NULL
+};
+
+/**
+ * Executes a command with arguments.
+ * @param args A NULL-terminated array of strings. args[0] is the executable.
+ * @return The exit status of the command, or -1 on fork/wait failure.
+ */
+static int systemv(const char* args[])
+{
+	pid_t pid = fork();
+
+	if (pid < 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
+
+	if (pid == 0) {
+#if defined(CLOSE_RANGE_CLOEXEC) && defined(HAVE_CLOSE_RANGE)
+		/* set all fd to be closed on exec as extra safety measure */
+		close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+
+		/* child process */
+		execve(args[0], (char* const*)args, envp_scrubbed);
+		_exit(EXIT_FAILURE);
+	}
+
+	/* parent process */
+	int status;
+	pid_t ret;
+	do {
+		ret = waitpid(pid, &status, 0);
+	} while (ret == -1 && errno == EINTR);
+	if (ret == -1) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
+
+	if (WIFEXITED(status)) {
+		return WEXITSTATUS(status);
+	} else if (WIFSIGNALED(status)) {
+		return -WTERMSIG(status);
+	}
+
+	return -1;
+}
+#endif
+
 /**
  * Exit codes.
  */
@@ -767,6 +873,12 @@ static int devdereference_zfs(uint64_t device, const char* dir, tommy_list* devl
 	char* slash = strchr(pool, '/');
 	if (slash)
 		*slash = 0;
+
+	if (validate_shell_input(pool) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
 	snprintf(cmd, sizeof(cmd), "%s status -P %s 2>/dev/null", zpool, pool);
 
@@ -2129,7 +2241,6 @@ int fssnapshot_btrfs_create(const struct fssnapshot_struct* fss, const char* nam
 static int fssnapshot_bcachefs_create(const struct fssnapshot_struct* fss, const char* name)
 {
 	char target_path[PATH_MAX];
-	char cmd[PATH_MAX * 3 + 64];
 	int ret;
 
 	const char* bcachefs = find_bcachefs();
@@ -2142,9 +2253,23 @@ static int fssnapshot_bcachefs_create(const struct fssnapshot_struct* fss, const
 	pathcpy(target_path, sizeof(target_path), fss->snapshot_dir);
 	pathcat(target_path, sizeof(target_path), name);
 
-	snprintf(cmd, sizeof(cmd), "%s subvolume snapshot -r %s %s", bcachefs, fss->root_dir, target_path);
+	if (validate_exec_input(fss->root_dir) != 0 || validate_exec_input(target_path) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
-	ret = system(cmd);
+	const char* argv[] = {
+		bcachefs,
+		"subvolume",
+		"snapshot",
+		"-r",
+		fss->root_dir,
+		target_path,
+		0
+	};
+
+	ret = systemv(argv);
 	if (ret != 0) {
 		/* LCOV_EXCL_START */
 		return -1;
@@ -2158,7 +2283,7 @@ static int fssnapshot_bcachefs_create(const struct fssnapshot_struct* fss, const
 #if HAVE_LINUX_DEVICE
 static int fssnapshot_zfs_create(const struct fssnapshot_struct* fss, const char* name)
 {
-	char cmd[PATH_MAX * 2 + 64];
+	char snapshot[PATH_MAX + 64];
 	int ret;
 
 	const char* zfs = find_zfs();
@@ -2168,9 +2293,22 @@ static int fssnapshot_zfs_create(const struct fssnapshot_struct* fss, const char
 		/* LCOV_EXCL_STOP */
 	}
 
-	snprintf(cmd, sizeof(cmd), "%s snapshot %s@%s", zfs, fss->dataset, name);
+	snprintf(snapshot, sizeof(snapshot), "%s@%s", fss->dataset, name);
 
-	ret = system(cmd);
+	if (validate_exec_input(snapshot) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
+
+	const char* argv[] = {
+		zfs,
+		"snapshot",
+		snapshot,
+		0
+	};
+
+	ret = systemv(argv);
 	if (ret != 0) {
 		/* LCOV_EXCL_START */
 		return -1;
@@ -2234,7 +2372,6 @@ int fssnapshot_btrfs_delete(const struct fssnapshot_struct* fss, const char* nam
 static int fssnapshot_bcachefs_delete(const struct fssnapshot_struct* fss, const char* name)
 {
 	char target_path[PATH_MAX];
-	char cmd[PATH_MAX * 2 + 64];
 	int ret;
 
 	const char* bcachefs = find_bcachefs();
@@ -2247,9 +2384,21 @@ static int fssnapshot_bcachefs_delete(const struct fssnapshot_struct* fss, const
 	pathcpy(target_path, sizeof(target_path), fss->snapshot_dir);
 	pathcat(target_path, sizeof(target_path), name);
 
-	snprintf(cmd, sizeof(cmd), "%s subvolume delete %s", bcachefs, target_path);
+	if (validate_exec_input(target_path) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
 
-	ret = system(cmd);
+	const char* argv[] = {
+		bcachefs,
+		"subvolume",
+		"delete",
+		target_path,
+		0,
+	};
+
+	ret = systemv(argv);
 	if (ret != 0) {
 		/* LCOV_EXCL_START */
 		return -1;
@@ -2263,7 +2412,7 @@ static int fssnapshot_bcachefs_delete(const struct fssnapshot_struct* fss, const
 #if HAVE_LINUX_DEVICE
 static int fssnapshot_zfs_delete(const struct fssnapshot_struct* fss, const char* name)
 {
-	char cmd[PATH_MAX * 2 + 64];
+	char snapshot[PATH_MAX + 64];
 	int ret;
 
 	const char* zfs = find_zfs();
@@ -2273,9 +2422,22 @@ static int fssnapshot_zfs_delete(const struct fssnapshot_struct* fss, const char
 		/* LCOV_EXCL_STOP */
 	}
 
-	snprintf(cmd, sizeof(cmd), "%s destroy %s@%s", zfs, fss->dataset, name);
+	snprintf(snapshot, sizeof(snapshot), "%s@%s", fss->dataset, name);
 
-	ret = system(cmd);
+	if (validate_exec_input(snapshot) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
+
+	const char* argv[] = {
+		zfs,
+		"destroy",
+		snapshot,
+		0
+	};
+
+	ret = systemv(argv);
 	if (ret != 0) {
 		/* LCOV_EXCL_START */
 		return -1;
@@ -2348,7 +2510,8 @@ static int fssnapshot_bcachefs_rename(const struct fssnapshot_struct* fss, const
 #if HAVE_LINUX_DEVICE
 static int fssnapshot_zfs_rename(const struct fssnapshot_struct* fss, const char* old_name, const char* new_name)
 {
-	char cmd[PATH_MAX * 2 + 64];
+	char old_snapshot[PATH_MAX + 64];
+	char new_snapshot[PATH_MAX + 64];
 	int ret;
 
 	const char* zfs = find_zfs();
@@ -2358,9 +2521,25 @@ static int fssnapshot_zfs_rename(const struct fssnapshot_struct* fss, const char
 		/* LCOV_EXCL_STOP */
 	}
 
-	snprintf(cmd, sizeof(cmd), "%s rename %s@%s %s@%s", zfs, fss->dataset, old_name, fss->dataset, new_name);
+	snprintf(old_snapshot, sizeof(old_snapshot), "%s@%s", fss->dataset, old_name);
+	snprintf(new_snapshot, sizeof(new_snapshot), "%s@%s", fss->dataset, new_name);
 
-	ret = system(cmd);
+	if (validate_exec_input(old_snapshot) != 0 || validate_exec_input(new_snapshot) != 0) {
+		/* LCOV_EXCL_START */
+		return -1;
+		/* LCOV_EXCL_STOP */
+	}
+
+	const char* argv[] = {
+		zfs,
+		"rename",
+		old_snapshot,
+		new_snapshot,
+		0
+	};
+
+
+	ret = systemv(argv);
 	if (ret != 0) {
 		/* LCOV_EXCL_START */
 		return -1;
