@@ -253,6 +253,22 @@
 /* os */
 
 /**
+ * Initialize signal handling.
+ */
+void os_signal_init();
+
+/**
+ * Restore signal handlers after fork in child process.
+ * This resets signals to default handling.
+ */
+void os_signal_restore_after_fork(void);
+
+/**
+ * Global variable to identify if Ctrl+C is pressed.
+ */
+int os_global_interrupt(void);
+
+/**
  * Get the os_tick counter value.
  *
  * Note that the frequency is unspecified, because the time measure
@@ -284,11 +300,6 @@ void os_abort(void) __noreturn;
  * Clear the screen.
  */
 void os_clear(void);
-
-/**
- * Global variable to identify if Ctrl+C is pressed.
- */
-extern volatile int global_interrupt;
 
 /****************************************************************************/
 /* app */
