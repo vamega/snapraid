@@ -8,6 +8,8 @@ Synopsis
 	:	[-a, --audit-only] [-h, --pre-hash] [-i, --import DIR]
 	:	[-p, --plan PERC|bad|new|full]
 	:	[-o, --older-than DAYS] [-l, --log FILE]
+	:	[--smartctl-path FILE] [--zfs-path FILE]
+	:	[--zpool-path FILE] [--bcachefs-path FILE]
 	:	[-s, --spin-down-on-error] [-w, --bw-limit RATE]
 	:	[-t, --tail]
 	:	[-Z, --force-zero] [-E, --force-empty]
@@ -754,6 +756,38 @@ Options
 		In Windows, it uses the file `snapraid.conf` in the same
 		directory as `snapraid.exe`.
 
+	--smartctl-path FILE
+		Sets the absolute path of the `smartctl` binary.
+		This option is available only on Unix builds.
+		If not specified, SnapRAID searches the usual system locations.
+		The same setting can be configured with `smartctl_path`.
+		If both are specified with different values, the command line value
+		is used and a warning is logged.
+
+	--zfs-path FILE
+		Sets the absolute path of the `zfs` binary.
+		This option is available only on Unix builds.
+		If not specified, SnapRAID searches the usual system locations.
+		The same setting can be configured with `zfs_path`.
+		If both are specified with different values, the command line value
+		is used and a warning is logged.
+
+	--zpool-path FILE
+		Sets the absolute path of the `zpool` binary.
+		This option is available only on Unix builds.
+		If not specified, SnapRAID searches the usual system locations.
+		The same setting can be configured with `zpool_path`.
+		If both are specified with different values, the command line value
+		is used and a warning is logged.
+
+	--bcachefs-path FILE
+		Sets the absolute path of the `bcachefs` binary.
+		This option is available only on Unix builds.
+		If not specified, SnapRAID searches the usual system locations.
+		The same setting can be configured with `bcachefs_path`.
+		If both are specified with different values, the command line value
+		is used and a warning is logged.
+
 	-f, --filter PATTERN
 		Filters the files to process in `check` and `fix`.
 		Only the files matching the specified pattern are processed.
@@ -1341,6 +1375,38 @@ Configuration
 	file directory and name.
 
 	This option is required only for Windows.
+
+  smartctl_path FILE
+	Sets the absolute path of the `smartctl` binary.
+	This option is available only on Unix builds.
+	If not specified, SnapRAID searches the usual system locations.
+	The same setting can be configured with `--smartctl-path`.
+	If both are specified with different values, the command line value
+	is used and a warning is logged.
+
+  zfs_path FILE
+	Sets the absolute path of the `zfs` binary.
+	This option is available only on Unix builds.
+	If not specified, SnapRAID searches the usual system locations.
+	The same setting can be configured with `--zfs-path`.
+	If both are specified with different values, the command line value
+	is used and a warning is logged.
+
+  zpool_path FILE
+	Sets the absolute path of the `zpool` binary.
+	This option is available only on Unix builds.
+	If not specified, SnapRAID searches the usual system locations.
+	The same setting can be configured with `--zpool-path`.
+	If both are specified with different values, the command line value
+	is used and a warning is logged.
+
+  bcachefs_path FILE
+	Sets the absolute path of the `bcachefs` binary.
+	This option is available only on Unix builds.
+	If not specified, SnapRAID searches the usual system locations.
+	The same setting can be configured with `--bcachefs-path`.
+	If both are specified with different values, the command line value
+	is used and a warning is logged.
 
   smartctl DISK/PARITY OPTIONS...
 	Defines custom smartctl options to obtain the SMART attributes for

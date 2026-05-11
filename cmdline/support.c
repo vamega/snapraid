@@ -1068,6 +1068,90 @@ void pathexport(char* dst, size_t size, const char* src)
 #endif
 }
 
+/****************************************************************************/
+/* external tools */
+
+#ifndef __MINGW32__
+static char global_smartctl_path[PATH_MAX];
+static char global_zfs_path[PATH_MAX];
+static char global_zpool_path[PATH_MAX];
+static char global_bcachefs_path[PATH_MAX];
+
+int tool_path_is_absolute(const char* path)
+{
+	if (path[0] == 0)
+		return 0;
+
+#ifdef _WIN32
+	if (isalpha((unsigned char)path[0]) && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))
+		return 1;
+	if ((path[0] == '/' || path[0] == '\\') && (path[1] == '/' || path[1] == '\\'))
+		return 1;
+	return 0;
+#else
+	return path[0] == '/';
+#endif
+}
+
+void tool_path_set(const char* smartctl, const char* zfs, const char* zpool, const char* bcachefs)
+{
+	if (smartctl && smartctl[0])
+		pathcpy(global_smartctl_path, sizeof(global_smartctl_path), smartctl);
+	else
+		global_smartctl_path[0] = 0;
+
+	if (zfs && zfs[0])
+		pathcpy(global_zfs_path, sizeof(global_zfs_path), zfs);
+	else
+		global_zfs_path[0] = 0;
+
+	if (zpool && zpool[0])
+		pathcpy(global_zpool_path, sizeof(global_zpool_path), zpool);
+	else
+		global_zpool_path[0] = 0;
+
+	if (bcachefs && bcachefs[0])
+		pathcpy(global_bcachefs_path, sizeof(global_bcachefs_path), bcachefs);
+	else
+		global_bcachefs_path[0] = 0;
+}
+
+const char* tool_path_smartctl(void)
+{
+	if (global_smartctl_path[0])
+		return global_smartctl_path;
+	return 0;
+}
+
+const char* tool_path_zfs(void)
+{
+	if (global_zfs_path[0])
+		return global_zfs_path;
+	return 0;
+}
+
+const char* tool_path_zpool(void)
+{
+	if (global_zpool_path[0])
+		return global_zpool_path;
+	return 0;
+}
+
+const char* tool_path_bcachefs(void)
+{
+	if (global_bcachefs_path[0])
+		return global_bcachefs_path;
+	return 0;
+}
+#endif
+
+void tool_path_log(const char* name, const char* path)
+{
+	char esc_buffer[ESC_MAX];
+
+	log_tag("tool:%s:%s\n", name, esc_tag(path, esc_buffer));
+}
+
 void pathprint(char* dst, size_t size, const char* format, ...)
 {
 	size_t len;

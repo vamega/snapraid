@@ -68,6 +68,12 @@ void os_signal_init(void)
 /****************************************************************************/
 /* exec */
 
+static const char* tool_path_found(const char* name, const char* path)
+{
+	tool_path_log(name, path);
+	return path;
+}
+
 #if HAVE_LINUX_DEVICE
 /*
  * Securely verify and open an executable file.
@@ -597,10 +603,6 @@ int exit_sync_needed = 2;
 
 #if HAVE_LINUX_DEVICE
 static const char* const bcachefs_paths[] = {
-#ifdef BCACHEFS_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	BCACHEFS_PATH,
-#else
 	"/usr/sbin/bcachefs",
 	"/sbin/bcachefs",
 	"/usr/local/sbin/bcachefs",
@@ -611,15 +613,21 @@ static const char* const bcachefs_paths[] = {
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/bcachefs",
 #endif
-#endif
 	0
 };
 
 static const char* find_bcachefs(void)
 {
+	const char* configured = tool_path_bcachefs();
+	if (configured) {
+		if (access(configured, X_OK) == 0)
+			return tool_path_found("bcachefs", configured);
+		return 0;
+	}
+
 	for (int i = 0; bcachefs_paths[i]; ++i) {
 		if (access(bcachefs_paths[i], X_OK) == 0) {
-			return bcachefs_paths[i];
+			return tool_path_found("bcachefs", bcachefs_paths[i]);
 		}
 	}
 
@@ -629,10 +637,6 @@ static const char* find_bcachefs(void)
 
 #if HAVE_LINUX_DEVICE
 static const char* const zfs_paths[] = {
-#ifdef ZFS_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	ZFS_PATH,
-#else
 	"/usr/sbin/zfs",
 	"/sbin/zfs",
 	"/usr/local/sbin/zfs",
@@ -643,25 +647,27 @@ static const char* const zfs_paths[] = {
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/zfs",
 #endif
-#endif
 	0
 };
 
 static const char* find_zfs(void)
 {
+	const char* configured = tool_path_zfs();
+	if (configured) {
+		if (access(configured, X_OK) == 0)
+			return tool_path_found("zfs", configured);
+		return 0;
+	}
+
 	for (int i = 0; zfs_paths[i]; ++i) {
 		if (access(zfs_paths[i], X_OK) == 0) {
-			return zfs_paths[i];
+			return tool_path_found("zfs", zfs_paths[i]);
 		}
 	}
 	return 0;
 }
 
 static const char* const zpool_paths[] = {
-#ifdef ZPOOL_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	ZPOOL_PATH,
-#else
 	"/usr/sbin/zpool",
 	"/sbin/zpool",
 	"/usr/local/sbin/zpool",
@@ -672,15 +678,21 @@ static const char* const zpool_paths[] = {
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/zpool",
 #endif
-#endif
 	0
 };
 
 static const char* find_zpool(void)
 {
+	const char* configured = tool_path_zpool();
+	if (configured) {
+		if (access(configured, X_OK) == 0)
+			return tool_path_found("zpool", configured);
+		return 0;
+	}
+
 	for (int i = 0; zpool_paths[i]; ++i) {
 		if (access(zpool_paths[i], X_OK) == 0) {
-			return zpool_paths[i];
+			return tool_path_found("zpool", zpool_paths[i]);
 		}
 	}
 	return 0;
@@ -785,10 +797,6 @@ const char* stat_desc(struct stat* st)
 #if HAVE_LINUX_DEVICE
 
 static const char* smartctl_paths[] = {
-#ifdef SMARTCTL_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	SMARTCTL_PATH,
-#else
 	/* Linux & BSD */
 	"/usr/sbin/smartctl",
 	"/sbin/smartctl",
@@ -799,15 +807,21 @@ static const char* smartctl_paths[] = {
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/smartctl",
 #endif
-#endif
 	0
 };
 
 static const char* find_smartctl(void)
 {
+	const char* configured = tool_path_smartctl();
+	if (configured) {
+		if (access(configured, X_OK) == 0)
+			return tool_path_found("smartctl", configured);
+		return 0;
+	}
+
 	for (int i = 0; smartctl_paths[i]; ++i) {
 		if (access(smartctl_paths[i], X_OK) == 0) {
-			return smartctl_paths[i];
+			return tool_path_found("smartctl", smartctl_paths[i]);
 		}
 	}
 
@@ -1273,6 +1287,7 @@ static int extract_zfs(const char* dir, char* dataset, size_t dataset_size, char
 {
 	char resolved[PATH_MAX];
 	char cmd[PATH_MAX * 2 + 64];
+	char esc_buffer[ESC_MAX];
 
 	const char* zfs = find_zfs();
 	if (!zfs) {
@@ -1288,7 +1303,7 @@ static int extract_zfs(const char* dir, char* dataset, size_t dataset_size, char
 	}
 
 	/* list all ZFS filesystems in one shot */
-	snprintf(cmd, sizeof(cmd), "%s list -H -o name,guid,mountpoint -t filesystem 2>/dev/null", zfs);
+	snprintf(cmd, sizeof(cmd), "%s list -H -o name,guid,mountpoint -t filesystem 2>/dev/null", esc_shell(zfs, esc_buffer));
 
 	FILE* fp = popen(cmd, "r");
 	if (!fp) {
@@ -1347,6 +1362,7 @@ static int devdereference_zfs(uint64_t device, const char* dir, tommy_list* devl
 {
 	char pool[PATH_MAX];
 	char cmd[PATH_MAX * 2 + 64];
+	char esc_buffer[ESC_MAX];
 
 	const char* zpool = find_zpool();
 	if (!zpool) {
@@ -1372,7 +1388,7 @@ static int devdereference_zfs(uint64_t device, const char* dir, tommy_list* devl
 		/* LCOV_EXCL_STOP */
 	}
 
-	snprintf(cmd, sizeof(cmd), "%s status -P %s 2>/dev/null", zpool, pool);
+	snprintf(cmd, sizeof(cmd), "%s status -P %s 2>/dev/null", esc_shell(zpool, esc_buffer), pool);
 
 	FILE* fp = popen(cmd, "r");
 	if (!fp) {
@@ -3378,8 +3394,9 @@ static int devstat(dev_t device, uint64_t* count)
 #if HAVE_LINUX_DEVICE
 static int devsmart(dev_t device, const char* name, const char* smartctl, struct smart_attr* smart, uint64_t* info, char* serial, char* family, char* model, char* interface)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3403,9 +3420,9 @@ static int devsmart(dev_t device, const char* name, const char* smartctl, struct
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -a %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -a %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -a %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -a %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);
@@ -3528,8 +3545,9 @@ static void devattr(dev_t device, uint64_t* info, char* serial, char* family, ch
 #if HAVE_LINUX_DEVICE
 static int devprobe(dev_t device, const char* name, const char* smartctl, int* power, struct smart_attr* smart, uint64_t* info, char* serial, char* family, char* model, char* interface)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3553,9 +3571,9 @@ static int devprobe(dev_t device, const char* name, const char* smartctl, int* p
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);
@@ -3618,8 +3636,9 @@ static int devprobe(dev_t device, const char* name, const char* smartctl, int* p
 #if HAVE_LINUX_DEVICE
 static int devdown(dev_t device, const char* name, const char* smartctl)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3643,9 +3662,9 @@ static int devdown(dev_t device, const char* name, const char* smartctl)
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);
@@ -4453,4 +4472,3 @@ int devmap(void)
 }
 
 #endif
-
