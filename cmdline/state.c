@@ -585,6 +585,88 @@ static void state_config_tool_path_set(char* dst, size_t dst_size, int* seen, co
 		pathcpy(dst, dst_size, tool_path);
 	}
 }
+
+struct state_config_tool_path_context {
+	int smartctl_seen;
+	int zfs_seen;
+	int zpool_seen;
+	int bcachefs_seen;
+};
+
+static void state_config_tool_path_context_init(struct state_config_tool_path_context* context)
+{
+	context->smartctl_seen = 0;
+	context->zfs_seen = 0;
+	context->zpool_seen = 0;
+	context->bcachefs_seen = 0;
+}
+
+static int state_config_tool_path_parse(struct state_config_tool_path_context* context, struct snapraid_option* opt, STREAM* f, const char* tag, const char* path, unsigned line)
+{
+	char buffer[PATH_MAX];
+	char* tool_path;
+	int* tool_path_seen;
+	int ret;
+
+	if (strcmp(tag, "smartctl_path") == 0) {
+		tool_path = opt->smartctl_path;
+		tool_path_seen = &context->smartctl_seen;
+	} else if (strcmp(tag, "zfs_path") == 0) {
+		tool_path = opt->zfs_path;
+		tool_path_seen = &context->zfs_seen;
+	} else if (strcmp(tag, "zpool_path") == 0) {
+		tool_path = opt->zpool_path;
+		tool_path_seen = &context->zpool_seen;
+	} else if (strcmp(tag, "bcachefs_path") == 0) {
+		tool_path = opt->bcachefs_path;
+		tool_path_seen = &context->bcachefs_seen;
+	} else {
+		return 0;
+	}
+
+	ret = sgetlasttok(f, buffer, sizeof(buffer));
+	if (ret < 0) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Invalid '%s' specification in '%s' at line %u\n", tag, path, line);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	state_config_tool_path_set(tool_path, PATH_MAX, tool_path_seen, tag, buffer, path, line);
+
+	return 1;
+}
+
+static void state_config_tool_path_apply(struct snapraid_option* opt)
+{
+	tool_path_set(opt->smartctl_path, opt->zfs_path, opt->zpool_path, opt->bcachefs_path);
+}
+#else
+struct state_config_tool_path_context {
+	int unused;
+};
+
+static void state_config_tool_path_context_init(struct state_config_tool_path_context* context)
+{
+	(void)context;
+}
+
+static int state_config_tool_path_parse(struct state_config_tool_path_context* context, struct snapraid_option* opt, STREAM* f, const char* tag, const char* path, unsigned line)
+{
+	(void)context;
+	(void)opt;
+	(void)f;
+	(void)tag;
+	(void)path;
+	(void)line;
+
+	return 0;
+}
+
+static void state_config_tool_path_apply(struct snapraid_option* opt)
+{
+	(void)opt;
+}
 #endif
 
 enum state_config_device_type {
@@ -809,12 +891,6 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 	tommy_list resolve_list;
 	char esc_buffer[ESC_MAX];
 	char esc_buffer1[ESC_MAX];
-#ifndef __MINGW32__
-	int smartctl_path_seen = 0;
-	int zfs_path_seen = 0;
-	int zpool_path_seen = 0;
-	int bcachefs_path_seen = 0;
-#endif
 
 	/* copy the options */
 	state->opt = *opt;
@@ -850,6 +926,9 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 		exit(EXIT_FAILURE);
 		/* LCOV_EXCL_STOP */
 	}
+
+	struct state_config_tool_path_context tool_path_context;
+	state_config_tool_path_context_init(&tool_path_context);
 
 	line = 1;
 	while (1) {
@@ -1227,47 +1306,8 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 
 			tommy_list_insert_tail(&state->extralist, &extra->node, extra);
 			state_config_device_insert(&resolve_list, STATE_CONFIG_DEVICE_EXTRA, line, tag, 0, 0, 0, extra);
-		}
-#ifndef __MINGW32__
-		else if (strcmp(tag, "smartctl_path") == 0
-			|| strcmp(tag, "zfs_path") == 0
-			|| strcmp(tag, "zpool_path") == 0
-			|| strcmp(tag, "bcachefs_path") == 0
-		) {
-			char* tool_path;
-			int* tool_path_seen;
-
-			if (strcmp(tag, "smartctl_path") == 0) {
-				tool_path = state->opt.smartctl_path;
-				tool_path_seen = &smartctl_path_seen;
-			} else if (strcmp(tag, "zfs_path") == 0) {
-				tool_path = state->opt.zfs_path;
-				tool_path_seen = &zfs_path_seen;
-			} else if (strcmp(tag, "zpool_path") == 0) {
-				tool_path = state->opt.zpool_path;
-				tool_path_seen = &zpool_path_seen;
-			} else if (strcmp(tag, "bcachefs_path") == 0) {
-				tool_path = state->opt.bcachefs_path;
-				tool_path_seen = &bcachefs_path_seen;
-			} else {
-				/* LCOV_EXCL_START */
-				log_fatal(EINTERNAL, "Internal inconsistency: Unknown tool path '%s'\n", tag);
-				exit(EXIT_FAILURE);
-				/* LCOV_EXCL_STOP */
-			}
-
-			ret = sgetlasttok(f, buffer, sizeof(buffer));
-			if (ret < 0) {
-				/* LCOV_EXCL_START */
-				log_fatal(EUSER, "Invalid '%s' specification in '%s' at line %u\n", tag, path, line);
-				exit(EXIT_FAILURE);
-				/* LCOV_EXCL_STOP */
-			}
-
-			state_config_tool_path_set(tool_path, PATH_MAX, tool_path_seen, tag, buffer, path, line);
-		}
-#endif
-		else if (strcmp(tag, "smartctl") == 0) {
+		} else if (state_config_tool_path_parse(&tool_path_context, &state->opt, f, tag, path, line)) {
+		} else if (strcmp(tag, "smartctl") == 0) {
 			char custom[PATH_MAX];
 
 			ret = sgettok(f, buffer, sizeof(buffer));
@@ -1623,9 +1663,7 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 
 	sclose(f);
 
-#ifndef __MINGW32__
-	tool_path_set(state->opt.smartctl_path, state->opt.zfs_path, state->opt.zpool_path, state->opt.bcachefs_path);
-#endif
+	state_config_tool_path_apply(&state->opt);
 	state_config_resolve_devices(state, path, &resolve_list);
 	tommy_list_foreach(&resolve_list, state_config_device_free);
 
