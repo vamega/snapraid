@@ -549,19 +549,6 @@ static int validate_smartctl(const char* custom)
 }
 
 #ifndef __MINGW32__
-static char* state_config_tool_path(struct snapraid_option* opt, const char* tag)
-{
-	if (strcmp(tag, "smartctl_path") == 0)
-		return opt->smartctl_path;
-	if (strcmp(tag, "zfs_path") == 0)
-		return opt->zfs_path;
-	if (strcmp(tag, "zpool_path") == 0)
-		return opt->zpool_path;
-	if (strcmp(tag, "bcachefs_path") == 0)
-		return opt->bcachefs_path;
-	return 0;
-}
-
 static void state_config_tool_path_set(char* dst, size_t dst_size, int* seen, const char* tag, const char* value, const char* path, unsigned line)
 {
 	char tool_path[PATH_MAX];
@@ -598,107 +585,220 @@ static void state_config_tool_path_set(char* dst, size_t dst_size, int* seen, co
 		pathcpy(dst, dst_size, tool_path);
 	}
 }
-
-static void state_config_tool_paths(struct snapraid_option* opt, const char* path)
-{
-	STREAM* f;
-	unsigned line;
-	int smartctl_seen = 0;
-	int zfs_seen = 0;
-	int zpool_seen = 0;
-	int bcachefs_seen = 0;
-
-	f = sopen_read(path, 0);
-	if (!f) {
-		/* LCOV_EXCL_START */
-		if (errno == ENOENT) {
-			log_fatal(errno, "No configuration file found at '%s'\n", path);
-		} else if (errno == EACCES) {
-			log_fatal(errno, "You do not have rights to access the configuration file '%s'\n", path);
-		} else {
-			log_fatal(errno, "Error opening the configuration file '%s'. %s.\n", path, strerror(errno));
-		}
-		exit(EXIT_FAILURE);
-		/* LCOV_EXCL_STOP */
-	}
-
-	line = 1;
-	while (1) {
-		char tag[PATH_MAX];
-		char buffer[PATH_MAX];
-		char* tool_path;
-		int* seen;
-		int ret;
-		int c;
-
-		sgetspace(f);
-
-		ret = sgettok(f, tag, sizeof(tag));
-		if (ret < 0) {
-			/* LCOV_EXCL_START */
-			log_fatal(EUSER, "Error reading the configuration file '%s' at line %u\n", path, line);
-			exit(EXIT_FAILURE);
-			/* LCOV_EXCL_STOP */
-		}
-
-		sgetspace(f);
-
-		tool_path = state_config_tool_path(opt, tag);
-		if (tool_path) {
-			ret = sgetlasttok(f, buffer, sizeof(buffer));
-			if (ret < 0) {
-				/* LCOV_EXCL_START */
-				log_fatal(EUSER, "Invalid '%s' specification in '%s' at line %u\n", tag, path, line);
-				exit(EXIT_FAILURE);
-				/* LCOV_EXCL_STOP */
-			}
-
-			if (strcmp(tag, "smartctl_path") == 0)
-				seen = &smartctl_seen;
-			else if (strcmp(tag, "zfs_path") == 0)
-				seen = &zfs_seen;
-			else if (strcmp(tag, "zpool_path") == 0)
-				seen = &zpool_seen;
-			else
-				seen = &bcachefs_seen;
-
-			state_config_tool_path_set(tool_path, PATH_MAX, seen, tag, buffer, path, line);
-		} else {
-			ret = sgetline(f, buffer, sizeof(buffer));
-			if (ret < 0) {
-				/* LCOV_EXCL_START */
-				log_fatal(EUSER, "Error reading the configuration file '%s' at line %u\n", path, line);
-				exit(EXIT_FAILURE);
-				/* LCOV_EXCL_STOP */
-			}
-		}
-
-		sgetspace(f);
-
-		c = sgeteol(f);
-		if (c == EOF)
-			break;
-		if (c != '\n') {
-			/* LCOV_EXCL_START */
-			log_fatal(EUSER, "Extra data in '%s' at line %u\n", path, line);
-			exit(EXIT_FAILURE);
-			/* LCOV_EXCL_STOP */
-		}
-		++line;
-	}
-
-	if (serror(f)) {
-		/* LCOV_EXCL_START */
-		log_fatal(errno, "Error reading the configuration file '%s' at line %u\n", path, line);
-		exit(EXIT_FAILURE);
-		/* LCOV_EXCL_STOP */
-	}
-
-	sclose(f);
-
-	tool_path_set(opt->smartctl_path, opt->zfs_path, opt->zpool_path, opt->bcachefs_path);
-}
 #endif
+
+enum state_config_device_type {
+	STATE_CONFIG_DEVICE_PARITY,
+	STATE_CONFIG_DEVICE_DISK,
+	STATE_CONFIG_DEVICE_EXTRA
+};
+
+struct state_config_device {
+	enum state_config_device_type type;
+	unsigned line;
+	char tag[PATH_MAX];
+	struct snapraid_parity* parity;
+	struct snapraid_split* split;
+	struct snapraid_disk* disk;
+	struct snapraid_extra* extra;
+	tommy_node node;
+};
+
+static void state_config_device_insert(tommy_list* list, enum state_config_device_type type, unsigned line, const char* tag, struct snapraid_parity* parity, struct snapraid_split* split, struct snapraid_disk* disk, struct snapraid_extra* extra)
+{
+	struct state_config_device* item;
+
+	item = malloc_nofail(sizeof(struct state_config_device));
+	item->type = type;
+	item->line = line;
+	pathcpy(item->tag, sizeof(item->tag), tag);
+	item->parity = parity;
+	item->split = split;
+	item->disk = disk;
+	item->extra = extra;
+
+	tommy_list_insert_tail(list, &item->node, item);
+}
+
+static void state_config_device_free(void* item)
+{
+	free(item);
+}
+
+static void state_config_resolve_parity(struct snapraid_state* state, const char* path, struct state_config_device* item)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+
+	if (!state->opt.skip_parity_access) {
+		struct stat st;
+
+		/* get the device of the directory containing the parity file */
+		pathimport(device, sizeof(device), item->split->path);
+
+		/* use only the dir, as the parity file may not exist yet */
+		pathcut(device);
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+		} else {
+			/* if the disk can be skipped */
+			if (state->opt.force_device) {
+				/* use a fake device, and mark the disk to be skipped */
+				dev = 0;
+				*uuid = 0;
+				item->parity->skip_access = 1;
+				log_fatal(errno, "DANGER! Skipping inaccessible parity disk '%s'...\n", item->tag);
+			} else {
+				/* LCOV_EXCL_START */
+				log_fatal(errno, "Error accessing 'parity' dir '%s' specification in '%s' at line %u\n", device, path, item->line);
+
+				/* in "fix" we allow to continue anyway */
+				if (strcmp(state->command, "fix") == 0) {
+					log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
+				}
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	item->split->device = dev;
+	pathcpy(item->split->uuid, sizeof(item->split->uuid), uuid);
+}
+
+static void state_config_resolve_disk(struct snapraid_state* state, struct state_config_device* item)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+	int skip_access;
+
+	/* get the device of the dir */
+	pathimport(device, sizeof(device), item->disk->mount_point);
+
+	/* if the disk has to be present */
+	skip_access = 0;
+	if (!state->opt.skip_disk_access) {
+		struct stat st;
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+
+			/* fake a different UUID when testing */
+			if (state->opt.fake_uuid) {
+				snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
+				--state->opt.fake_uuid;
+			}
+		} else {
+			/* if the disk can be skipped */
+			if (state->opt.force_device) {
+				/* use a fake device, and mark the disk to be skipped */
+				dev = 0;
+				*uuid = 0;
+				skip_access = 1;
+				log_fatal(errno, "DANGER! Skipping inaccessible data disk '%s'...\n", item->disk->name);
+			} else {
+				/* LCOV_EXCL_START */
+				log_fatal(errno, "Error accessing 'disk' '%s' specification in '%s' at line %u\n", item->disk->mount_point, device, item->line);
+
+				/* in "fix" we allow to continue anyway */
+				if (strcmp(state->command, "fix") == 0) {
+					log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
+				}
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	item->disk->mount_device = dev;
+	item->disk->dir_device = dev;
+	pathcpy(item->disk->uuid, sizeof(item->disk->uuid), uuid);
+	item->disk->has_unsupported_uuid = *uuid == 0;
+	item->disk->skip_access = skip_access;
+}
+
+static void state_config_resolve_extra(struct snapraid_state* state, struct state_config_device* item)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+
+	/* get the device of the dir */
+	pathimport(device, sizeof(device), item->extra->dir);
+
+	/* if the disk has to be present */
+	if (!state->opt.skip_disk_access) {
+		struct stat st;
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+
+			/* fake a different UUID when testing */
+			if (state->opt.fake_uuid) {
+				snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
+				--state->opt.fake_uuid;
+			}
+		} else {
+			/* use a fake device, and mark the disk to be skipped */
+			dev = 0;
+			*uuid = 0;
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	item->extra->device = dev;
+	pathcpy(item->extra->uuid, sizeof(item->extra->uuid), uuid);
+}
+
+static void state_config_resolve_devices(struct snapraid_state* state, const char* path, tommy_list* list)
+{
+	tommy_node* node;
+
+	for (node = tommy_list_head(list); node != 0; node = node->next) {
+		struct state_config_device* item = node->data;
+
+		switch (item->type) {
+		case STATE_CONFIG_DEVICE_PARITY :
+			state_config_resolve_parity(state, path, item);
+			break;
+		case STATE_CONFIG_DEVICE_DISK :
+			state_config_resolve_disk(state, item);
+			break;
+		case STATE_CONFIG_DEVICE_EXTRA :
+			state_config_resolve_extra(state, item);
+			break;
+		}
+	}
+}
 
 void state_config(struct snapraid_state* state, const char* path, const char* command, struct snapraid_option* opt, tommy_list* filterlist_disk)
 {
@@ -706,14 +806,19 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 	unsigned line;
 	tommy_node* i;
 	unsigned l, s;
+	tommy_list resolve_list;
 	char esc_buffer[ESC_MAX];
 	char esc_buffer1[ESC_MAX];
+#ifndef __MINGW32__
+	int smartctl_path_seen = 0;
+	int zfs_path_seen = 0;
+	int zpool_path_seen = 0;
+	int bcachefs_path_seen = 0;
+#endif
 
 	/* copy the options */
 	state->opt = *opt;
-#ifndef __MINGW32__
-	state_config_tool_paths(&state->opt, path);
-#endif
+	tommy_list_init(&resolve_list);
 
 	/* if unset, sort by physical order */
 	if (!state->opt.force_order)
@@ -834,11 +939,8 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 
 			BLOCK_HASH_SIZE = hash_size;
 		} else if (lev_config_scan(tag, &level, &state->raid_mode) == 0) {
-			char device[PATH_MAX];
 			char* split_map[SPLIT_MAX + 1];
 			unsigned split_mac;
-			uint64_t dev;
-			int skip_access;
 
 			if (state->parity[level].split_mac != 0) {
 				/* LCOV_EXCL_START */
@@ -871,60 +973,16 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			skip_access = 0;
+			state->parity[level].skip_access = 0;
 			state->parity[level].split_mac = split_mac;
 			for (s = 0; s < split_mac; ++s) {
-				char uuid[UUID_MAX];
-				pathimport(state->parity[level].split_map[s].path, sizeof(state->parity[level].split_map[s].path), split_map[s]);
+				struct snapraid_split* split = &state->parity[level].split_map[s];
 
-				if (!state->opt.skip_parity_access) {
-					struct stat st;
-
-					/* get the device of the directory containing the parity file */
-					pathimport(device, sizeof(device), split_map[s]);
-
-					/* use only the dir, as the parity file may not exist yet */
-					pathcut(device);
-
-					if (stat(device, &st) == 0) {
-						dev = st.st_dev;
-
-						/* read the uuid, if unsupported use an empty one */
-						if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-							*uuid = 0;
-						}
-					} else {
-						/* if the disk can be skipped */
-						if (state->opt.force_device) {
-							/* use a fake device, and mark the disk to be skipped */
-							dev = 0;
-							*uuid = 0;
-							skip_access = 1;
-							log_fatal(errno, "DANGER! Skipping inaccessible parity disk '%s'...\n", tag);
-						} else {
-							/* LCOV_EXCL_START */
-							log_fatal(errno, "Error accessing 'parity' dir '%s' specification in '%s' at line %u\n", device, path, line);
-
-							/* in "fix" we allow to continue anyway */
-							if (strcmp(state->command, "fix") == 0) {
-								log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
-							}
-							exit(EXIT_FAILURE);
-							/* LCOV_EXCL_STOP */
-						}
-					}
-				} else {
-					/* use a fake device */
-					dev = 0;
-					*uuid = 0;
-				}
-
-				state->parity[level].split_map[s].device = dev;
-				pathcpy(state->parity[level].split_map[s].uuid, sizeof(state->parity[level].split_map[s].uuid), uuid);
+				pathimport(split->path, sizeof(split->path), split_map[s]);
+				split->device = 0;
+				split->uuid[0] = 0;
+				state_config_device_insert(&resolve_list, STATE_CONFIG_DEVICE_PARITY, line, tag, &state->parity[level], split, 0, 0);
 			}
-
-			/* store the global parity skip_access */
-			state->parity[level].skip_access = skip_access;
 
 			/* adjust the level */
 			if (state->level < level + 1)
@@ -1065,11 +1123,7 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 		} else if (strcmp(tag, "data") == 0 || strcmp(tag, "disk") == 0) {
 			/* "disk" is the deprecated name up to SnapRAID 9.x */
 			char dir[PATH_MAX];
-			char device[PATH_MAX];
-			char uuid[UUID_MAX];
 			struct snapraid_disk* disk;
-			uint64_t dev;
-			int skip_access;
 
 			ret = sgettok(f, buffer, sizeof(buffer));
 			if (ret < 0) {
@@ -1103,9 +1157,6 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* get the device of the dir */
-			pathimport(device, sizeof(device), dir);
-
 			/* check if the disk name already exists */
 			for (i = state->disklist; i != 0; i = i->next) {
 				disk = i->data;
@@ -1119,59 +1170,13 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* if the disk has to be present */
-			skip_access = 0;
-			if (!state->opt.skip_disk_access) {
-				struct stat st;
-
-				if (stat(device, &st) == 0) {
-					dev = st.st_dev;
-
-					/* read the uuid, if unsupported use an empty one */
-					if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-						*uuid = 0;
-					}
-
-					/* fake a different UUID when testing */
-					if (state->opt.fake_uuid) {
-						snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
-						--state->opt.fake_uuid;
-					}
-				} else {
-					/* if the disk can be skipped */
-					if (state->opt.force_device) {
-						/* use a fake device, and mark the disk to be skipped */
-						dev = 0;
-						*uuid = 0;
-						skip_access = 1;
-						log_fatal(errno, "DANGER! Skipping inaccessible data disk '%s'...\n", buffer);
-					} else {
-						/* LCOV_EXCL_START */
-						log_fatal(errno, "Error accessing 'disk' '%s' specification in '%s' at line %u\n", dir, device, line);
-
-						/* in "fix" we allow to continue anyway */
-						if (strcmp(state->command, "fix") == 0) {
-							log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
-						}
-						exit(EXIT_FAILURE);
-						/* LCOV_EXCL_STOP */
-					}
-				}
-			} else {
-				/* use a fake device */
-				dev = 0;
-				*uuid = 0;
-			}
-
-			disk = disk_alloc(buffer, dir, dev, uuid, skip_access);
+			disk = disk_alloc(buffer, dir, 0, "", 0);
 
 			tommy_list_insert_tail(&state->disklist, &disk->node, disk);
+			state_config_device_insert(&resolve_list, STATE_CONFIG_DEVICE_DISK, line, tag, 0, 0, disk, 0);
 		} else if (strcmp(tag, "extra") == 0) {
 			char dir[PATH_MAX];
-			char device[PATH_MAX];
-			char uuid[UUID_MAX];
 			struct snapraid_extra* extra;
-			uint64_t dev;
 
 			ret = sgettok(f, buffer, sizeof(buffer));
 			if (ret < 0) {
@@ -1205,9 +1210,6 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* get the device of the dir */
-			pathimport(device, sizeof(device), dir);
-
 			/* check if the disk name already exists */
 			for (i = state->extralist; i != 0; i = i->next) {
 				extra = i->data;
@@ -1221,40 +1223,39 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* if the disk has to be present */
-			if (!state->opt.skip_disk_access) {
-				struct stat st;
-
-				if (stat(device, &st) == 0) {
-					dev = st.st_dev;
-
-					/* read the uuid, if unsupported use an empty one */
-					if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-						*uuid = 0;
-					}
-
-					/* fake a different UUID when testing */
-					if (state->opt.fake_uuid) {
-						snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
-						--state->opt.fake_uuid;
-					}
-				} else {
-					/* use a fake device, and mark the disk to be skipped */
-					dev = 0;
-					*uuid = 0;
-				}
-			} else {
-				/* use a fake device */
-				dev = 0;
-				*uuid = 0;
-			}
-
-			extra = extra_alloc(buffer, dir, dev, uuid);
+			extra = extra_alloc(buffer, dir, 0, "");
 
 			tommy_list_insert_tail(&state->extralist, &extra->node, extra);
+			state_config_device_insert(&resolve_list, STATE_CONFIG_DEVICE_EXTRA, line, tag, 0, 0, 0, extra);
 		}
 #ifndef __MINGW32__
-		else if (state_config_tool_path(&state->opt, tag) != 0) {
+		else if (strcmp(tag, "smartctl_path") == 0
+			|| strcmp(tag, "zfs_path") == 0
+			|| strcmp(tag, "zpool_path") == 0
+			|| strcmp(tag, "bcachefs_path") == 0
+		) {
+			char* tool_path;
+			int* tool_path_seen;
+
+			if (strcmp(tag, "smartctl_path") == 0) {
+				tool_path = state->opt.smartctl_path;
+				tool_path_seen = &smartctl_path_seen;
+			} else if (strcmp(tag, "zfs_path") == 0) {
+				tool_path = state->opt.zfs_path;
+				tool_path_seen = &zfs_path_seen;
+			} else if (strcmp(tag, "zpool_path") == 0) {
+				tool_path = state->opt.zpool_path;
+				tool_path_seen = &zpool_path_seen;
+			} else if (strcmp(tag, "bcachefs_path") == 0) {
+				tool_path = state->opt.bcachefs_path;
+				tool_path_seen = &bcachefs_path_seen;
+			} else {
+				/* LCOV_EXCL_START */
+				log_fatal(EINTERNAL, "Internal inconsistency: Unknown tool path '%s'\n", tag);
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+
 			ret = sgetlasttok(f, buffer, sizeof(buffer));
 			if (ret < 0) {
 				/* LCOV_EXCL_START */
@@ -1262,6 +1263,8 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				exit(EXIT_FAILURE);
 				/* LCOV_EXCL_STOP */
 			}
+
+			state_config_tool_path_set(tool_path, PATH_MAX, tool_path_seen, tag, buffer, path, line);
 		}
 #endif
 		else if (strcmp(tag, "smartctl") == 0) {
@@ -1619,6 +1622,12 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 	}
 
 	sclose(f);
+
+#ifndef __MINGW32__
+	tool_path_set(state->opt.smartctl_path, state->opt.zfs_path, state->opt.zpool_path, state->opt.bcachefs_path);
+#endif
+	state_config_resolve_devices(state, path, &resolve_list);
+	tommy_list_foreach(&resolve_list, state_config_device_free);
 
 	state_config_check(state, path, filterlist_disk);
 
@@ -6146,4 +6155,3 @@ void state_snapshot_write(struct snapraid_state* state, tommy_list* filterlist_d
 		}
 	}
 }
-
