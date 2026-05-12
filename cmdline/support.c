@@ -1079,18 +1079,20 @@ static char global_bcachefs_path[PATH_MAX];
 
 int tool_path_is_absolute(const char* path)
 {
-	if (path[0] == 0)
-		return 0;
-
-#ifdef _WIN32
-	if (isalpha((unsigned char)path[0]) && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))
-		return 1;
-	if ((path[0] == '/' || path[0] == '\\') && (path[1] == '/' || path[1] == '\\'))
-		return 1;
-	return 0;
-#else
 	return path[0] == '/';
-#endif
+}
+
+int tool_path_validate(const char* value, char* out, size_t out_size)
+{
+	pathimport(out, out_size, value);
+
+	if (out[0] == 0)
+		return TOOL_PATH_EMPTY;
+
+	if (!tool_path_is_absolute(out))
+		return TOOL_PATH_NOT_ABSOLUTE;
+
+	return TOOL_PATH_OK;
 }
 
 void tool_path_set(const char* smartctl, const char* zfs, const char* zpool, const char* bcachefs)
@@ -1144,13 +1146,6 @@ const char* tool_path_bcachefs(void)
 	return 0;
 }
 #endif
-
-void tool_path_log(const char* name, const char* path)
-{
-	char esc_buffer[ESC_MAX];
-
-	log_tag("tool:%s:%s\n", name, esc_tag(path, esc_buffer));
-}
 
 void pathprint(char* dst, size_t size, const char* format, ...)
 {

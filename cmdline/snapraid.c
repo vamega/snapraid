@@ -962,15 +962,13 @@ static void option_tool_path_set(char* dst, size_t dst_size, const char* option,
 {
 	char path[PATH_MAX];
 
-	pathimport(path, sizeof(path), value);
-	if (path[0] == 0) {
+	switch (tool_path_validate(value, path, sizeof(path))) {
+	case TOOL_PATH_EMPTY :
 		/* LCOV_EXCL_START */
 		log_fatal(EUSER, "Empty tool path for '--%s'\n", option);
 		exit(EXIT_FAILURE);
 		/* LCOV_EXCL_STOP */
-	}
-
-	if (!tool_path_is_absolute(path)) {
+	case TOOL_PATH_NOT_ABSOLUTE :
 		/* LCOV_EXCL_START */
 		log_fatal(EUSER, "Tool path '--%s' requires an absolute path (got '%s')\n", option, value);
 		exit(EXIT_FAILURE);

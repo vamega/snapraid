@@ -561,16 +561,13 @@ static void state_config_tool_path_set(char* dst, size_t dst_size, int* seen, co
 	}
 	*seen = 1;
 
-	pathimport(tool_path, sizeof(tool_path), value);
-
-	if (tool_path[0] == 0) {
+	switch (tool_path_validate(value, tool_path, sizeof(tool_path))) {
+	case TOOL_PATH_EMPTY :
 		/* LCOV_EXCL_START */
 		log_fatal(EUSER, "Empty '%s' specification in '%s' at line %u\n", tag, path, line);
 		exit(EXIT_FAILURE);
 		/* LCOV_EXCL_STOP */
-	}
-
-	if (!tool_path_is_absolute(tool_path)) {
+	case TOOL_PATH_NOT_ABSOLUTE :
 		/* LCOV_EXCL_START */
 		log_fatal(EUSER, "'%s' requires an absolute path in '%s' at line %u\n", tag, path, line);
 		exit(EXIT_FAILURE);

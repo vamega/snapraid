@@ -68,12 +68,6 @@ void os_signal_init(void)
 /****************************************************************************/
 /* exec */
 
-static const char* tool_path_found(const char* name, const char* path)
-{
-	tool_path_log(name, path);
-	return path;
-}
-
 #if HAVE_LINUX_DEVICE
 /*
  * Securely verify and open an executable file.
@@ -621,13 +615,13 @@ static const char* find_bcachefs(void)
 	const char* configured = tool_path_bcachefs();
 	if (configured) {
 		if (access(configured, X_OK) == 0)
-			return tool_path_found("bcachefs", configured);
+			return configured;
 		return 0;
 	}
 
 	for (int i = 0; bcachefs_paths[i]; ++i) {
 		if (access(bcachefs_paths[i], X_OK) == 0) {
-			return tool_path_found("bcachefs", bcachefs_paths[i]);
+			return bcachefs_paths[i];
 		}
 	}
 
@@ -655,13 +649,13 @@ static const char* find_zfs(void)
 	const char* configured = tool_path_zfs();
 	if (configured) {
 		if (access(configured, X_OK) == 0)
-			return tool_path_found("zfs", configured);
+			return configured;
 		return 0;
 	}
 
 	for (int i = 0; zfs_paths[i]; ++i) {
 		if (access(zfs_paths[i], X_OK) == 0) {
-			return tool_path_found("zfs", zfs_paths[i]);
+			return zfs_paths[i];
 		}
 	}
 	return 0;
@@ -686,13 +680,13 @@ static const char* find_zpool(void)
 	const char* configured = tool_path_zpool();
 	if (configured) {
 		if (access(configured, X_OK) == 0)
-			return tool_path_found("zpool", configured);
+			return configured;
 		return 0;
 	}
 
 	for (int i = 0; zpool_paths[i]; ++i) {
 		if (access(zpool_paths[i], X_OK) == 0) {
-			return tool_path_found("zpool", zpool_paths[i]);
+			return zpool_paths[i];
 		}
 	}
 	return 0;
@@ -815,13 +809,13 @@ static const char* find_smartctl(void)
 	const char* configured = tool_path_smartctl();
 	if (configured) {
 		if (access(configured, X_OK) == 0)
-			return tool_path_found("smartctl", configured);
+			return configured;
 		return 0;
 	}
 
 	for (int i = 0; smartctl_paths[i]; ++i) {
 		if (access(smartctl_paths[i], X_OK) == 0) {
-			return tool_path_found("smartctl", smartctl_paths[i]);
+			return smartctl_paths[i];
 		}
 	}
 
