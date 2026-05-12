@@ -518,6 +518,8 @@ static void state_config_check(struct snapraid_state* state, const char* path, t
 	}
 }
 
+
+
 /**
  * Validate the smartctl command.
  *
@@ -700,6 +702,160 @@ static void state_config_tool_paths(struct snapraid_option* opt, const char* pat
 }
 #endif
 
+static void state_config_resolve_parity(struct snapraid_state* state, const char* path, unsigned line, const char* tag, struct snapraid_parity* parity, struct snapraid_split* split)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+
+	if (!state->opt.skip_parity_access) {
+		struct stat st;
+
+		/* get the device of the directory containing the parity file */
+		pathimport(device, sizeof(device), split->path);
+
+		/* use only the dir, as the parity file may not exist yet */
+		pathcut(device);
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+		} else {
+			/* if the disk can be skipped */
+			if (state->opt.force_device) {
+				/* use a fake device, and mark the disk to be skipped */
+				dev = 0;
+				*uuid = 0;
+				parity->skip_access = 1;
+				log_fatal(errno, "DANGER! Skipping inaccessible parity disk '%s'...\n", tag);
+			} else {
+				/* LCOV_EXCL_START */
+				log_fatal(errno, "Error accessing 'parity' dir '%s' specification in '%s' at line %u\n", device, path, line);
+
+				/* in "fix" we allow to continue anyway */
+				if (strcmp(state->command, "fix") == 0) {
+					log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
+				}
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	split->device = dev;
+	pathcpy(split->uuid, sizeof(split->uuid), uuid);
+}
+
+static void state_config_resolve_disk(struct snapraid_state* state, unsigned line, struct snapraid_disk* disk, const char* dir)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+	int skip_access;
+
+	/* get the device of the dir */
+	pathimport(device, sizeof(device), dir);
+
+	/* if the disk has to be present */
+	skip_access = 0;
+	if (!state->opt.skip_disk_access) {
+		struct stat st;
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+
+			/* fake a different UUID when testing */
+			if (state->opt.fake_uuid) {
+				snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
+				--state->opt.fake_uuid;
+			}
+		} else {
+			/* if the disk can be skipped */
+			if (state->opt.force_device) {
+				/* use a fake device, and mark the disk to be skipped */
+				dev = 0;
+				*uuid = 0;
+				skip_access = 1;
+				log_fatal(errno, "DANGER! Skipping inaccessible data disk '%s'...\n", disk->name);
+			} else {
+				/* LCOV_EXCL_START */
+				log_fatal(errno, "Error accessing 'disk' '%s' specification in '%s' at line %u\n", dir, device, line);
+
+				/* in "fix" we allow to continue anyway */
+				if (strcmp(state->command, "fix") == 0) {
+					log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
+				}
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	disk->mount_device = dev;
+	disk->dir_device = dev;
+	pathcpy(disk->uuid, sizeof(disk->uuid), uuid);
+	disk->has_unsupported_uuid = *uuid == 0;
+	disk->skip_access = skip_access;
+}
+
+static void state_config_resolve_extra(struct snapraid_state* state, struct snapraid_extra* extra)
+{
+	char device[PATH_MAX];
+	char uuid[UUID_MAX];
+	uint64_t dev;
+
+	/* get the device of the dir */
+	pathimport(device, sizeof(device), extra->dir);
+
+	/* if the disk has to be present */
+	if (!state->opt.skip_disk_access) {
+		struct stat st;
+
+		if (stat(device, &st) == 0) {
+			dev = st.st_dev;
+
+			/* read the uuid, if unsupported use an empty one */
+			if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
+				*uuid = 0;
+			}
+
+			/* fake a different UUID when testing */
+			if (state->opt.fake_uuid) {
+				snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
+				--state->opt.fake_uuid;
+			}
+		} else {
+			/* use a fake device, and mark the disk to be skipped */
+			dev = 0;
+			*uuid = 0;
+		}
+	} else {
+		/* use a fake device */
+		dev = 0;
+		*uuid = 0;
+	}
+
+	extra->device = dev;
+	pathcpy(extra->uuid, sizeof(extra->uuid), uuid);
+}
+
 void state_config(struct snapraid_state* state, const char* path, const char* command, struct snapraid_option* opt, tommy_list* filterlist_disk)
 {
 	STREAM* f;
@@ -834,11 +990,8 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 
 			BLOCK_HASH_SIZE = hash_size;
 		} else if (lev_config_scan(tag, &level, &state->raid_mode) == 0) {
-			char device[PATH_MAX];
 			char* split_map[SPLIT_MAX + 1];
 			unsigned split_mac;
-			uint64_t dev;
-			int skip_access;
 
 			if (state->parity[level].split_mac != 0) {
 				/* LCOV_EXCL_START */
@@ -871,60 +1024,14 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			skip_access = 0;
+			state->parity[level].skip_access = 0;
 			state->parity[level].split_mac = split_mac;
 			for (s = 0; s < split_mac; ++s) {
-				char uuid[UUID_MAX];
-				pathimport(state->parity[level].split_map[s].path, sizeof(state->parity[level].split_map[s].path), split_map[s]);
+				struct snapraid_split* split = &state->parity[level].split_map[s];
 
-				if (!state->opt.skip_parity_access) {
-					struct stat st;
-
-					/* get the device of the directory containing the parity file */
-					pathimport(device, sizeof(device), split_map[s]);
-
-					/* use only the dir, as the parity file may not exist yet */
-					pathcut(device);
-
-					if (stat(device, &st) == 0) {
-						dev = st.st_dev;
-
-						/* read the uuid, if unsupported use an empty one */
-						if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-							*uuid = 0;
-						}
-					} else {
-						/* if the disk can be skipped */
-						if (state->opt.force_device) {
-							/* use a fake device, and mark the disk to be skipped */
-							dev = 0;
-							*uuid = 0;
-							skip_access = 1;
-							log_fatal(errno, "DANGER! Skipping inaccessible parity disk '%s'...\n", tag);
-						} else {
-							/* LCOV_EXCL_START */
-							log_fatal(errno, "Error accessing 'parity' dir '%s' specification in '%s' at line %u\n", device, path, line);
-
-							/* in "fix" we allow to continue anyway */
-							if (strcmp(state->command, "fix") == 0) {
-								log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
-							}
-							exit(EXIT_FAILURE);
-							/* LCOV_EXCL_STOP */
-						}
-					}
-				} else {
-					/* use a fake device */
-					dev = 0;
-					*uuid = 0;
-				}
-
-				state->parity[level].split_map[s].device = dev;
-				pathcpy(state->parity[level].split_map[s].uuid, sizeof(state->parity[level].split_map[s].uuid), uuid);
+				pathimport(split->path, sizeof(split->path), split_map[s]);
+				state_config_resolve_parity(state, path, line, tag, &state->parity[level], split);
 			}
-
-			/* store the global parity skip_access */
-			state->parity[level].skip_access = skip_access;
 
 			/* adjust the level */
 			if (state->level < level + 1)
@@ -1065,11 +1172,7 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 		} else if (strcmp(tag, "data") == 0 || strcmp(tag, "disk") == 0) {
 			/* "disk" is the deprecated name up to SnapRAID 9.x */
 			char dir[PATH_MAX];
-			char device[PATH_MAX];
-			char uuid[UUID_MAX];
 			struct snapraid_disk* disk;
-			uint64_t dev;
-			int skip_access;
 
 			ret = sgettok(f, buffer, sizeof(buffer));
 			if (ret < 0) {
@@ -1103,9 +1206,6 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* get the device of the dir */
-			pathimport(device, sizeof(device), dir);
-
 			/* check if the disk name already exists */
 			for (i = state->disklist; i != 0; i = i->next) {
 				disk = i->data;
@@ -1119,59 +1219,13 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* if the disk has to be present */
-			skip_access = 0;
-			if (!state->opt.skip_disk_access) {
-				struct stat st;
-
-				if (stat(device, &st) == 0) {
-					dev = st.st_dev;
-
-					/* read the uuid, if unsupported use an empty one */
-					if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-						*uuid = 0;
-					}
-
-					/* fake a different UUID when testing */
-					if (state->opt.fake_uuid) {
-						snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
-						--state->opt.fake_uuid;
-					}
-				} else {
-					/* if the disk can be skipped */
-					if (state->opt.force_device) {
-						/* use a fake device, and mark the disk to be skipped */
-						dev = 0;
-						*uuid = 0;
-						skip_access = 1;
-						log_fatal(errno, "DANGER! Skipping inaccessible data disk '%s'...\n", buffer);
-					} else {
-						/* LCOV_EXCL_START */
-						log_fatal(errno, "Error accessing 'disk' '%s' specification in '%s' at line %u\n", dir, device, line);
-
-						/* in "fix" we allow to continue anyway */
-						if (strcmp(state->command, "fix") == 0) {
-							log_fatal(errno, "You can '%s' anyway, using 'snapraid --force-device %s'.\n", state->command, state->command);
-						}
-						exit(EXIT_FAILURE);
-						/* LCOV_EXCL_STOP */
-					}
-				}
-			} else {
-				/* use a fake device */
-				dev = 0;
-				*uuid = 0;
-			}
-
-			disk = disk_alloc(buffer, dir, dev, uuid, skip_access);
+			disk = disk_alloc(buffer, dir, 0, "", 0);
+			state_config_resolve_disk(state, line, disk, dir);
 
 			tommy_list_insert_tail(&state->disklist, &disk->node, disk);
 		} else if (strcmp(tag, "extra") == 0) {
 			char dir[PATH_MAX];
-			char device[PATH_MAX];
-			char uuid[UUID_MAX];
 			struct snapraid_extra* extra;
-			uint64_t dev;
 
 			ret = sgettok(f, buffer, sizeof(buffer));
 			if (ret < 0) {
@@ -1205,9 +1259,6 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* get the device of the dir */
-			pathimport(device, sizeof(device), dir);
-
 			/* check if the disk name already exists */
 			for (i = state->extralist; i != 0; i = i->next) {
 				extra = i->data;
@@ -1221,35 +1272,8 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 				/* LCOV_EXCL_STOP */
 			}
 
-			/* if the disk has to be present */
-			if (!state->opt.skip_disk_access) {
-				struct stat st;
-
-				if (stat(device, &st) == 0) {
-					dev = st.st_dev;
-
-					/* read the uuid, if unsupported use an empty one */
-					if (devuuid(dev, device, uuid, sizeof(uuid)) != 0) {
-						*uuid = 0;
-					}
-
-					/* fake a different UUID when testing */
-					if (state->opt.fake_uuid) {
-						snprintf(uuid, sizeof(uuid), "fake-uuid-%d", state->opt.fake_uuid);
-						--state->opt.fake_uuid;
-					}
-				} else {
-					/* use a fake device, and mark the disk to be skipped */
-					dev = 0;
-					*uuid = 0;
-				}
-			} else {
-				/* use a fake device */
-				dev = 0;
-				*uuid = 0;
-			}
-
-			extra = extra_alloc(buffer, dir, dev, uuid);
+			extra = extra_alloc(buffer, dir, 0, "");
+			state_config_resolve_extra(state, extra);
 
 			tommy_list_insert_tail(&state->extralist, &extra->node, extra);
 		}
