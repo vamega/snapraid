@@ -108,6 +108,12 @@ struct snapraid_option {
 	uint64_t parity_limit_size; /**< Test limit for parity files. */
 	int skip_multi_scan; /**< Don't use threads in scan. */
 	uint64_t bwlimit; /**< Bandwidth limit in bytes per second. */
+#ifndef __MINGW32__
+	char smartctl_path[PATH_MAX]; /**< Path to the smartctl binary. Empty means auto. */
+	char zfs_path[PATH_MAX]; /**< Path to the zfs binary. Empty means auto. */
+	char zpool_path[PATH_MAX]; /**< Path to the zpool binary. Empty means auto. */
+	char bcachefs_path[PATH_MAX]; /**< Path to the bcachefs binary. Empty means auto. */
+#endif
 };
 
 struct snapraid_state {

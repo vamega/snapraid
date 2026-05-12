@@ -53,6 +53,12 @@ void usage(const char* conf)
 	printf("  " SWITCH_GETOPT_LONG("-o, --older-than DAYS ", "-o") "  Process only the older part of the array\n");
 	printf("  " SWITCH_GETOPT_LONG("-i, --import DIR      ", "-i") "  Import deleted files\n");
 	printf("  " SWITCH_GETOPT_LONG("-l, --log FILE        ", "-l") "  Log file. Default none\n");
+#if HAVE_GETOPT_LONG && !defined(__MINGW32__)
+	printf("      --smartctl-path FILE  Path to the smartctl binary\n");
+	printf("      --zfs-path FILE       Path to the zfs binary\n");
+	printf("      --zpool-path FILE     Path to the zpool binary\n");
+	printf("      --bcachefs-path FILE  Path to the bcachefs binary\n");
+#endif
 	printf("  " SWITCH_GETOPT_LONG("-a, --audit-only      ", "-a") "  Check only file data and not parity\n");
 	printf("  " SWITCH_GETOPT_LONG("-h, --pre-hash        ", "-h") "  Pre-hash all the new data\n");
 	printf("  " SWITCH_GETOPT_LONG("-Z, --force-zero      ", "-Z") "  Force syncing of files that get zero size\n");
@@ -638,6 +644,12 @@ void config(char* conf, size_t conf_size, const char* argv0)
 #define OPT_GUI_TOUCH_BEFORE 504
 #define OPT_GUI_THRESHOLD_REMOVES 505
 #define OPT_GUI_THRESHOLD_UPDATES 506
+#ifndef __MINGW32__
+#define OPT_SMARTCTL_PATH 507
+#define OPT_ZFS_PATH 508
+#define OPT_ZPOOL_PATH 509
+#define OPT_BCACHEFS_PATH 510
+#endif
 
 /**
  * Test options
@@ -735,6 +747,12 @@ static struct option long_options[] = {
 
 
 	{ "no-warnings", 0, 0, OPT_NO_WARNINGS }, /* disable annoying warnings */
+#ifndef __MINGW32__
+	{ "smartctl-path", 1, 0, OPT_SMARTCTL_PATH },
+	{ "zfs-path", 1, 0, OPT_ZFS_PATH },
+	{ "zpool-path", 1, 0, OPT_ZPOOL_PATH },
+	{ "bcachefs-path", 1, 0, OPT_BCACHEFS_PATH },
+#endif
 	{ "gui", 0, 0, OPT_GUI }, /* undocumented GUI interface option (it was also 'G' in the past) */
 	{ "gui-verbose", 0, 0, OPT_GUI_VERBOSE }, /* undocumented GUI interface option */
 	{ "gui-rescan-after", 0, 0, OPT_GUI_RESCAN_AFTER }, /* undocumented GUI, force a rescan after the command to log differences */
@@ -938,6 +956,30 @@ int parse_option_size(const char* arg, uint64_t* out_size)
 #define OPERATION_PROBE 18
 #define OPERATION_LOCATE 19
 #define OPERATION_SPINDOWNIFUP 20
+
+#ifndef __MINGW32__
+static void option_tool_path_set(char* dst, size_t dst_size, const char* option, const char* value)
+{
+	char path[PATH_MAX];
+
+	pathimport(path, sizeof(path), value);
+	if (path[0] == 0) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Empty tool path for '--%s'\n", option);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	if (!tool_path_is_absolute(path)) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Tool path '--%s' requires an absolute path (got '%s')\n", option, value);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	pathcpy(dst, dst_size, path);
+}
+#endif
 
 int snapraid_main(int argc, char* argv[])
 {
@@ -1214,6 +1256,20 @@ int snapraid_main(int argc, char* argv[])
 		case OPT_NO_WARNINGS :
 			opt.no_warnings = 1;
 			break;
+#ifndef __MINGW32__
+		case OPT_SMARTCTL_PATH :
+			option_tool_path_set(opt.smartctl_path, sizeof(opt.smartctl_path), "smartctl-path", optarg);
+			break;
+		case OPT_ZFS_PATH :
+			option_tool_path_set(opt.zfs_path, sizeof(opt.zfs_path), "zfs-path", optarg);
+			break;
+		case OPT_ZPOOL_PATH :
+			option_tool_path_set(opt.zpool_path, sizeof(opt.zpool_path), "zpool-path", optarg);
+			break;
+		case OPT_BCACHEFS_PATH :
+			option_tool_path_set(opt.bcachefs_path, sizeof(opt.bcachefs_path), "bcachefs-path", optarg);
+			break;
+#endif
 		case OPT_GUI :
 			opt.gui = 1;
 			break;

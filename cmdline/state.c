@@ -548,6 +548,158 @@ static int validate_smartctl(const char* custom)
 	return 0;
 }
 
+#ifndef __MINGW32__
+static char* state_config_tool_path(struct snapraid_option* opt, const char* tag)
+{
+	if (strcmp(tag, "smartctl_path") == 0)
+		return opt->smartctl_path;
+	if (strcmp(tag, "zfs_path") == 0)
+		return opt->zfs_path;
+	if (strcmp(tag, "zpool_path") == 0)
+		return opt->zpool_path;
+	if (strcmp(tag, "bcachefs_path") == 0)
+		return opt->bcachefs_path;
+	return 0;
+}
+
+static void state_config_tool_path_set(char* dst, size_t dst_size, int* seen, const char* tag, const char* value, const char* path, unsigned line)
+{
+	char tool_path[PATH_MAX];
+
+	if (*seen) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Multiple '%s' specification in '%s' at line %u\n", tag, path, line);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+	*seen = 1;
+
+	pathimport(tool_path, sizeof(tool_path), value);
+
+	if (tool_path[0] == 0) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Empty '%s' specification in '%s' at line %u\n", tag, path, line);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	if (!tool_path_is_absolute(tool_path)) {
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "'%s' requires an absolute path in '%s' at line %u\n", tag, path, line);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	if (dst[0]) {
+		if (pathcmp(dst, tool_path) != 0) {
+			log_error(EUSER, "WARNING! '%s' '%s' in '%s' overridden by command line '%s'\n", tag, tool_path, path, dst);
+		}
+	} else {
+		pathcpy(dst, dst_size, tool_path);
+	}
+}
+
+static void state_config_tool_paths(struct snapraid_option* opt, const char* path)
+{
+	STREAM* f;
+	unsigned line;
+	int smartctl_seen = 0;
+	int zfs_seen = 0;
+	int zpool_seen = 0;
+	int bcachefs_seen = 0;
+
+	f = sopen_read(path, 0);
+	if (!f) {
+		/* LCOV_EXCL_START */
+		if (errno == ENOENT) {
+			log_fatal(errno, "No configuration file found at '%s'\n", path);
+		} else if (errno == EACCES) {
+			log_fatal(errno, "You do not have rights to access the configuration file '%s'\n", path);
+		} else {
+			log_fatal(errno, "Error opening the configuration file '%s'. %s.\n", path, strerror(errno));
+		}
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	line = 1;
+	while (1) {
+		char tag[PATH_MAX];
+		char buffer[PATH_MAX];
+		char* tool_path;
+		int* seen;
+		int ret;
+		int c;
+
+		sgetspace(f);
+
+		ret = sgettok(f, tag, sizeof(tag));
+		if (ret < 0) {
+			/* LCOV_EXCL_START */
+			log_fatal(EUSER, "Error reading the configuration file '%s' at line %u\n", path, line);
+			exit(EXIT_FAILURE);
+			/* LCOV_EXCL_STOP */
+		}
+
+		sgetspace(f);
+
+		tool_path = state_config_tool_path(opt, tag);
+		if (tool_path) {
+			ret = sgetlasttok(f, buffer, sizeof(buffer));
+			if (ret < 0) {
+				/* LCOV_EXCL_START */
+				log_fatal(EUSER, "Invalid '%s' specification in '%s' at line %u\n", tag, path, line);
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+
+			if (strcmp(tag, "smartctl_path") == 0)
+				seen = &smartctl_seen;
+			else if (strcmp(tag, "zfs_path") == 0)
+				seen = &zfs_seen;
+			else if (strcmp(tag, "zpool_path") == 0)
+				seen = &zpool_seen;
+			else
+				seen = &bcachefs_seen;
+
+			state_config_tool_path_set(tool_path, PATH_MAX, seen, tag, buffer, path, line);
+		} else {
+			ret = sgetline(f, buffer, sizeof(buffer));
+			if (ret < 0) {
+				/* LCOV_EXCL_START */
+				log_fatal(EUSER, "Error reading the configuration file '%s' at line %u\n", path, line);
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+
+		sgetspace(f);
+
+		c = sgeteol(f);
+		if (c == EOF)
+			break;
+		if (c != '\n') {
+			/* LCOV_EXCL_START */
+			log_fatal(EUSER, "Extra data in '%s' at line %u\n", path, line);
+			exit(EXIT_FAILURE);
+			/* LCOV_EXCL_STOP */
+		}
+		++line;
+	}
+
+	if (serror(f)) {
+		/* LCOV_EXCL_START */
+		log_fatal(errno, "Error reading the configuration file '%s' at line %u\n", path, line);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	sclose(f);
+
+	tool_path_set(opt->smartctl_path, opt->zfs_path, opt->zpool_path, opt->bcachefs_path);
+}
+#endif
+
 void state_config(struct snapraid_state* state, const char* path, const char* command, struct snapraid_option* opt, tommy_list* filterlist_disk)
 {
 	STREAM* f;
@@ -559,6 +711,9 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 
 	/* copy the options */
 	state->opt = *opt;
+#ifndef __MINGW32__
+	state_config_tool_paths(&state->opt, path);
+#endif
 
 	/* if unset, sort by physical order */
 	if (!state->opt.force_order)
@@ -1097,7 +1252,19 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 			extra = extra_alloc(buffer, dir, dev, uuid);
 
 			tommy_list_insert_tail(&state->extralist, &extra->node, extra);
-		} else if (strcmp(tag, "smartctl") == 0) {
+		}
+#ifndef __MINGW32__
+		else if (state_config_tool_path(&state->opt, tag) != 0) {
+			ret = sgetlasttok(f, buffer, sizeof(buffer));
+			if (ret < 0) {
+				/* LCOV_EXCL_START */
+				log_fatal(EUSER, "Invalid '%s' specification in '%s' at line %u\n", tag, path, line);
+				exit(EXIT_FAILURE);
+				/* LCOV_EXCL_STOP */
+			}
+		}
+#endif
+		else if (strcmp(tag, "smartctl") == 0) {
 			char custom[PATH_MAX];
 
 			ret = sgettok(f, buffer, sizeof(buffer));
@@ -1503,6 +1670,16 @@ void state_config(struct snapraid_state* state, const char* path, const char* co
 		log_tag("share:%s\n", esc_tag(state->share, esc_buffer));
 	if (state->autosave != 0)
 		log_tag("autosave:%" PRIu64 "\n", state->autosave);
+#ifndef __MINGW32__
+	if (state->opt.smartctl_path[0] != 0)
+		log_tag("tool:smartctl:%s\n", esc_tag(state->opt.smartctl_path, esc_buffer));
+	if (state->opt.zfs_path[0] != 0)
+		log_tag("tool:zfs:%s\n", esc_tag(state->opt.zfs_path, esc_buffer));
+	if (state->opt.zpool_path[0] != 0)
+		log_tag("tool:zpool:%s\n", esc_tag(state->opt.zpool_path, esc_buffer));
+	if (state->opt.bcachefs_path[0] != 0)
+		log_tag("tool:bcachefs:%s\n", esc_tag(state->opt.bcachefs_path, esc_buffer));
+#endif
 	for (i = tommy_list_head(&state->filterlist); i != 0; i = i->next) {
 		char out[PATH_MAX];
 		struct snapraid_filter* filter = i->data;

@@ -30,11 +30,11 @@ SnapRAID HISTORY
    will be slower, this change preserves hash data in the content file
    to ensure a better fix during disk failures and allows the --import
    option to remain functional even after an incomplete sync.
- * Added --with-smartctl, --with-zfs, --with-zpool, --with-bcachefs
-   configure options to allow pinning the absolute path of each tool at
-   build time. When not specified, the existing runtime discovery
-   behaviour is preserved. Primarily intended for NixOS and other
-   non-FHS systems.
+ * Added Unix runtime configuration options and command line options to set
+   the absolute path of the smartctl, zfs, zpool, and bcachefs tools.
+   Runtime discovery is still used when no explicit path is specified.
+   If both the configuration file and command line specify different
+   paths, the command line value is used and a warning is logged.
 
 14.5 2026/05
 ============

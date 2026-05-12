@@ -126,6 +126,13 @@ exclude /lost+found/
 # Format: "pool DIR"
 #pool /pool
 
+# Defines the absolute paths of external tools.
+# If not specified, SnapRAID searches the usual system locations.
+#smartctl_path /usr/sbin/smartctl
+#zfs_path /usr/sbin/zfs
+#zpool_path /usr/sbin/zpool
+#bcachefs_path /usr/sbin/bcachefs
+
 # Defines a custom smartctl command to obtain the SMART attributes
 # for each disk. This may be required for RAID controllers and for
 # some USB disk that cannot be autodetected.
