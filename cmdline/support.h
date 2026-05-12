@@ -262,6 +262,27 @@ static inline const char* esc_shell(const char* str, char* buffer)
 	return esc_shell_multi(&str, 1, buffer);
 }
 
+/****************************************************************************/
+/* external tools */
+
+/**
+ * Check if a tool path is absolute for the running platform.
+ */
+#ifndef __MINGW32__
+int tool_path_is_absolute(const char* path);
+
+/**
+ * Set runtime paths for external tools. Empty strings preserve runtime discovery.
+ */
+void tool_path_set(const char* smartctl, const char* zfs, const char* zpool, const char* bcachefs);
+
+const char* tool_path_smartctl(void);
+const char* tool_path_zfs(void);
+const char* tool_path_zpool(void);
+const char* tool_path_bcachefs(void);
+#endif
+void tool_path_log(const char* name, const char* path);
+
 /**
  * Polish a string.
  *
