@@ -2744,4 +2744,3 @@ int wnmatch_sub(const char* p, const char* t, int match_sub)
 		return *t != 0;
 	}
 }
-
