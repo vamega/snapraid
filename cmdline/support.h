@@ -262,6 +262,42 @@ static inline const char* esc_shell(const char* str, char* buffer)
 	return esc_shell_multi(&str, 1, buffer);
 }
 
+/****************************************************************************/
+/* external tools */
+
+/**
+ * Result codes for tool_path_validate().
+ */
+#define TOOL_PATH_OK 0
+#define TOOL_PATH_EMPTY 1
+#define TOOL_PATH_NOT_ABSOLUTE 2
+
+#ifndef __MINGW32__
+/**
+ * Check if a tool path is absolute.
+ */
+int tool_path_is_absolute(const char* path);
+
+/**
+ * Import a user-supplied tool path into \a out and validate it.
+ *
+ * Returns TOOL_PATH_OK on success, or a TOOL_PATH_* error code if the value
+ * is empty or not absolute. The caller is responsible for formatting the
+ * context-specific error message and exiting.
+ */
+int tool_path_validate(const char* value, char* out, size_t out_size);
+
+/**
+ * Set runtime paths for external tools. Empty strings preserve runtime discovery.
+ */
+void tool_path_set(const char* smartctl, const char* zfs, const char* zpool, const char* bcachefs);
+
+const char* tool_path_smartctl(void);
+const char* tool_path_zfs(void);
+const char* tool_path_zpool(void);
+const char* tool_path_bcachefs(void);
+#endif
+
 /**
  * Polish a string.
  *

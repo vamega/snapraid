@@ -12,6 +12,8 @@ snapraid [-c, --conf CONFIG]
 	[-a, --audit-only] [-h, --pre-hash] [-i, --import DIR]
 	[-p, --plan PERC|bad|new|full]
 	[-o, --older-than DAYS] [-l, --log FILE]
+	[--smartctl-path FILE] [--zfs-path FILE]
+	[--zpool-path FILE] [--bcachefs-path FILE]
 	[-s, --spin-down-on-error] [-w, --bw-limit RATE]
 	[-t, --tail]
 	[-Z, --force-zero] [-E, --force-empty]
@@ -1055,6 +1057,26 @@ SnapRAID provides the following options:
         To output the log to standard output or standard error,
         you can use `">&1"` and `">&2"`, respectively.
         See the snapraid_log.txt file or man page for log tag descriptions.
+
+    --smartctl-path FILE
+        Sets the absolute path to the `smartctl` binary.
+        If not specified, SnapRAID searches the usual system paths.
+        This option is only available on Unix-like systems.
+
+    --zfs-path FILE
+        Sets the absolute path to the `zfs` binary.
+        If not specified, SnapRAID searches the usual system paths.
+        This option is only available on Unix-like systems.
+
+    --zpool-path FILE
+        Sets the absolute path to the `zpool` binary.
+        If not specified, SnapRAID searches the usual system paths.
+        This option is only available on Unix-like systems.
+
+    --bcachefs-path FILE
+        Sets the absolute path to the `bcachefs` binary.
+        If not specified, SnapRAID searches the usual system paths.
+        This option is only available on Unix-like systems.
 
     -L, --error-limit NUMBER
         Sets a new error limit before stopping execution.

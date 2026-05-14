@@ -596,6 +596,33 @@ int exit_sync_needed = 2;
 #define ZFS_SUPER_MAGIC 0x2FC12FC1
 
 #if HAVE_LINUX_DEVICE
+static int tool_path_is_executable_file(const char* path)
+{
+	struct stat st;
+
+	if (stat(path, &st) != 0)
+		return 0;
+
+	if (!S_ISREG(st.st_mode))
+		return 0;
+
+	return access(path, X_OK) == 0;
+}
+
+static const char* tool_path_found(const char* name, const char* path, int* logged)
+{
+	if (!*logged) {
+		char esc_buffer[ESC_MAX];
+
+		log_tag("tool:%s:%s\n", name, esc_tag(path, esc_buffer));
+		*logged = 1;
+	}
+
+	return path;
+}
+#endif
+
+#if HAVE_LINUX_DEVICE
 static const char* const bcachefs_paths[] = {
 	"/usr/sbin/bcachefs",
 	"/sbin/bcachefs",
@@ -612,9 +639,17 @@ static const char* const bcachefs_paths[] = {
 
 static const char* find_bcachefs(void)
 {
+	static int logged;
+	const char* configured = tool_path_bcachefs();
+	if (configured) {
+		if (tool_path_is_executable_file(configured))
+			return tool_path_found("bcachefs", configured, &logged);
+		return 0;
+	}
+
 	for (int i = 0; bcachefs_paths[i]; ++i) {
-		if (access(bcachefs_paths[i], X_OK) == 0) {
-			return bcachefs_paths[i];
+		if (tool_path_is_executable_file(bcachefs_paths[i])) {
+			return tool_path_found("bcachefs", bcachefs_paths[i], &logged);
 		}
 	}
 
@@ -639,9 +674,17 @@ static const char* const zfs_paths[] = {
 
 static const char* find_zfs(void)
 {
+	static int logged;
+	const char* configured = tool_path_zfs();
+	if (configured) {
+		if (tool_path_is_executable_file(configured))
+			return tool_path_found("zfs", configured, &logged);
+		return 0;
+	}
+
 	for (int i = 0; zfs_paths[i]; ++i) {
-		if (access(zfs_paths[i], X_OK) == 0) {
-			return zfs_paths[i];
+		if (tool_path_is_executable_file(zfs_paths[i])) {
+			return tool_path_found("zfs", zfs_paths[i], &logged);
 		}
 	}
 	return 0;
@@ -663,9 +706,17 @@ static const char* const zpool_paths[] = {
 
 static const char* find_zpool(void)
 {
+	static int logged;
+	const char* configured = tool_path_zpool();
+	if (configured) {
+		if (tool_path_is_executable_file(configured))
+			return tool_path_found("zpool", configured, &logged);
+		return 0;
+	}
+
 	for (int i = 0; zpool_paths[i]; ++i) {
-		if (access(zpool_paths[i], X_OK) == 0) {
-			return zpool_paths[i];
+		if (tool_path_is_executable_file(zpool_paths[i])) {
+			return tool_path_found("zpool", zpool_paths[i], &logged);
 		}
 	}
 	return 0;
@@ -785,9 +836,17 @@ static const char* smartctl_paths[] = {
 
 static const char* find_smartctl(void)
 {
+	static int logged;
+	const char* configured = tool_path_smartctl();
+	if (configured) {
+		if (tool_path_is_executable_file(configured))
+			return tool_path_found("smartctl", configured, &logged);
+		return 0;
+	}
+
 	for (int i = 0; smartctl_paths[i]; ++i) {
-		if (access(smartctl_paths[i], X_OK) == 0) {
-			return smartctl_paths[i];
+		if (tool_path_is_executable_file(smartctl_paths[i])) {
+			return tool_path_found("smartctl", smartctl_paths[i], &logged);
 		}
 	}
 
@@ -1253,6 +1312,7 @@ static int extract_zfs(const char* dir, char* dataset, size_t dataset_size, char
 {
 	char resolved[PATH_MAX];
 	char cmd[PATH_MAX * 2 + 64];
+	char esc_buffer[ESC_MAX];
 
 	const char* zfs = find_zfs();
 	if (!zfs) {
@@ -1268,7 +1328,7 @@ static int extract_zfs(const char* dir, char* dataset, size_t dataset_size, char
 	}
 
 	/* list all ZFS filesystems in one shot */
-	snprintf(cmd, sizeof(cmd), "%s list -H -o name,guid,mountpoint -t filesystem 2>/dev/null", zfs);
+	snprintf(cmd, sizeof(cmd), "%s list -H -o name,guid,mountpoint -t filesystem 2>/dev/null", esc_shell(zfs, esc_buffer));
 
 	FILE* fp = popen(cmd, "r");
 	if (!fp) {
@@ -1326,7 +1386,8 @@ static int extract_zfs(const char* dir, char* dataset, size_t dataset_size, char
 static int devdereference_zfs(uint64_t device, const char* dir, tommy_list* devlist)
 {
 	char pool[PATH_MAX];
-	char cmd[PATH_MAX * 2 + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
+	char esc_buffer[ESC_MAX];
 
 	const char* zpool = find_zpool();
 	if (!zpool) {
@@ -1352,7 +1413,7 @@ static int devdereference_zfs(uint64_t device, const char* dir, tommy_list* devl
 		/* LCOV_EXCL_STOP */
 	}
 
-	snprintf(cmd, sizeof(cmd), "%s status -P %s 2>/dev/null", zpool, pool);
+	snprintf(cmd, sizeof(cmd), "%s status -P %s 2>/dev/null", esc_shell(zpool, esc_buffer), pool);
 
 	FILE* fp = popen(cmd, "r");
 	if (!fp) {
@@ -3358,8 +3419,9 @@ static int devstat(dev_t device, uint64_t* count)
 #if HAVE_LINUX_DEVICE
 static int devsmart(dev_t device, const char* name, const char* smartctl, struct smart_attr* smart, uint64_t* info, char* serial, char* family, char* model, char* interface)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3383,9 +3445,9 @@ static int devsmart(dev_t device, const char* name, const char* smartctl, struct
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -a %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -a %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -a %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -a %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);
@@ -3508,8 +3570,9 @@ static void devattr(dev_t device, uint64_t* info, char* serial, char* family, ch
 #if HAVE_LINUX_DEVICE
 static int devprobe(dev_t device, const char* name, const char* smartctl, int* power, struct smart_attr* smart, uint64_t* info, char* serial, char* family, char* model, char* interface)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3533,9 +3596,9 @@ static int devprobe(dev_t device, const char* name, const char* smartctl, int* p
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -n standby,3 -a %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);
@@ -3598,8 +3661,9 @@ static int devprobe(dev_t device, const char* name, const char* smartctl, int* p
 #if HAVE_LINUX_DEVICE
 static int devdown(dev_t device, const char* name, const char* smartctl)
 {
-	char cmd[PATH_MAX + 64];
+	char cmd[ESC_MAX + PATH_MAX + 64];
 	char file[PATH_MAX];
+	char esc_buffer[ESC_MAX];
 	FILE* f;
 	int ret;
 	const char* x;
@@ -3623,9 +3687,9 @@ static int devdown(dev_t device, const char* name, const char* smartctl)
 	if (smartctl[0]) {
 		char option[PATH_MAX];
 		snprintf(option, sizeof(option), smartctl, file);
-		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", x, option);
+		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", esc_shell(x, esc_buffer), option);
 	} else {
-		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", x, file);
+		snprintf(cmd, sizeof(cmd), "%s -s standby,now %s", esc_shell(x, esc_buffer), file);
 	}
 
 	log_tag("smartctl:%s:%s:run: %s\n", file, name, cmd);

@@ -53,6 +53,14 @@ void usage(const char* conf)
 	printf("  " SWITCH_GETOPT_LONG("-o, --older-than DAYS ", "-o") "  Process only the older part of the array\n");
 	printf("  " SWITCH_GETOPT_LONG("-i, --import DIR      ", "-i") "  Import deleted files\n");
 	printf("  " SWITCH_GETOPT_LONG("-l, --log FILE        ", "-l") "  Log file. Default none\n");
+#if HAVE_GETOPT_LONG
+#ifndef __MINGW32__
+	printf("      --smartctl-path FILE  Path to the smartctl binary\n");
+	printf("      --zfs-path FILE       Path to the zfs binary\n");
+	printf("      --zpool-path FILE     Path to the zpool binary\n");
+	printf("      --bcachefs-path FILE  Path to the bcachefs binary\n");
+#endif
+#endif
 	printf("  " SWITCH_GETOPT_LONG("-a, --audit-only      ", "-a") "  Check only file data and not parity\n");
 	printf("  " SWITCH_GETOPT_LONG("-h, --pre-hash        ", "-h") "  Pre-hash all the new data\n");
 	printf("  " SWITCH_GETOPT_LONG("-Z, --force-zero      ", "-Z") "  Force syncing of files that get zero size\n");
@@ -638,6 +646,12 @@ void config(char* conf, size_t conf_size, const char* argv0)
 #define OPT_GUI_TOUCH_BEFORE 504
 #define OPT_GUI_THRESHOLD_REMOVES 505
 #define OPT_GUI_THRESHOLD_UPDATES 506
+#ifndef __MINGW32__
+#define OPT_SMARTCTL_PATH 507
+#define OPT_ZFS_PATH 508
+#define OPT_ZPOOL_PATH 509
+#define OPT_BCACHEFS_PATH 510
+#endif
 
 /**
  * Test options
@@ -735,6 +749,12 @@ static struct option long_options[] = {
 
 
 	{ "no-warnings", 0, 0, OPT_NO_WARNINGS }, /* disable annoying warnings */
+#ifndef __MINGW32__
+	{ "smartctl-path", 1, 0, OPT_SMARTCTL_PATH },
+	{ "zfs-path", 1, 0, OPT_ZFS_PATH },
+	{ "zpool-path", 1, 0, OPT_ZPOOL_PATH },
+	{ "bcachefs-path", 1, 0, OPT_BCACHEFS_PATH },
+#endif
 	{ "gui", 0, 0, OPT_GUI }, /* undocumented GUI interface option (it was also 'G' in the past) */
 	{ "gui-verbose", 0, 0, OPT_GUI_VERBOSE }, /* undocumented GUI interface option */
 	{ "gui-rescan-after", 0, 0, OPT_GUI_RESCAN_AFTER }, /* undocumented GUI, force a rescan after the command to log differences */
@@ -939,12 +959,40 @@ int parse_option_size(const char* arg, uint64_t* out_size)
 #define OPERATION_LOCATE 19
 #define OPERATION_SPINDOWNIFUP 20
 
+#ifndef __MINGW32__
+static void option_tool_path_set(char* dst, size_t dst_size, const char* option, const char* value)
+{
+	char path[PATH_MAX];
+
+	switch (tool_path_validate(value, path, sizeof(path))) {
+	case TOOL_PATH_EMPTY :
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Empty tool path for '--%s'\n", option);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	case TOOL_PATH_NOT_ABSOLUTE :
+		/* LCOV_EXCL_START */
+		log_fatal(EUSER, "Tool path '--%s' requires an absolute path (got '%s')\n", option, value);
+		exit(EXIT_FAILURE);
+		/* LCOV_EXCL_STOP */
+	}
+
+	pathcpy(dst, dst_size, path);
+}
+#endif
+
 int snapraid_main(int argc, char* argv[])
 {
 	char esc_buffer[ESC_MAX];
 	int c;
 	struct snapraid_option opt;
 	char conf[PATH_MAX];
+#ifndef __MINGW32__
+	char smartctl_path[PATH_MAX];
+	char zfs_path[PATH_MAX];
+	char zpool_path[PATH_MAX];
+	char bcachefs_path[PATH_MAX];
+#endif
 	struct snapraid_state state;
 	int operation;
 	block_off_t blockstart;
@@ -982,6 +1030,12 @@ int snapraid_main(int argc, char* argv[])
 	/* defaults */
 	config(conf, sizeof(conf), argv[0]);
 	memset(&opt, 0, sizeof(opt));
+#ifndef __MINGW32__
+	smartctl_path[0] = 0;
+	zfs_path[0] = 0;
+	zpool_path[0] = 0;
+	bcachefs_path[0] = 0;
+#endif
 	opt.io_error_limit = 100;
 	blockstart = 0;
 	blockcount = 0;
@@ -1214,6 +1268,20 @@ int snapraid_main(int argc, char* argv[])
 		case OPT_NO_WARNINGS :
 			opt.no_warnings = 1;
 			break;
+#ifndef __MINGW32__
+		case OPT_SMARTCTL_PATH :
+			option_tool_path_set(smartctl_path, sizeof(smartctl_path), "smartctl-path", optarg);
+			break;
+		case OPT_ZFS_PATH :
+			option_tool_path_set(zfs_path, sizeof(zfs_path), "zfs-path", optarg);
+			break;
+		case OPT_ZPOOL_PATH :
+			option_tool_path_set(zpool_path, sizeof(zpool_path), "zpool-path", optarg);
+			break;
+		case OPT_BCACHEFS_PATH :
+			option_tool_path_set(bcachefs_path, sizeof(bcachefs_path), "bcachefs-path", optarg);
+			break;
+#endif
 		case OPT_GUI :
 			opt.gui = 1;
 			break;
@@ -1765,6 +1833,10 @@ int snapraid_main(int argc, char* argv[])
 	for (i = 0; i < argc; ++i)
 		log_tag("argv:%u:%s\n", i, esc_tag(argv[i], esc_buffer));
 	log_flush();
+
+#ifndef __MINGW32__
+	tool_path_set(smartctl_path, zfs_path, zpool_path, bcachefs_path);
+#endif
 
 	if (!opt.skip_self)
 		selftest();
