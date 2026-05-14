@@ -597,10 +597,6 @@ int exit_sync_needed = 2;
 
 #if HAVE_LINUX_DEVICE
 static const char* const bcachefs_paths[] = {
-#ifdef BCACHEFS_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	BCACHEFS_PATH,
-#else
 	"/usr/sbin/bcachefs",
 	"/sbin/bcachefs",
 	"/usr/local/sbin/bcachefs",
@@ -610,7 +606,6 @@ static const char* const bcachefs_paths[] = {
 #ifdef __APPLE__
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/bcachefs",
-#endif
 #endif
 	0
 };
@@ -629,10 +624,6 @@ static const char* find_bcachefs(void)
 
 #if HAVE_LINUX_DEVICE
 static const char* const zfs_paths[] = {
-#ifdef ZFS_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	ZFS_PATH,
-#else
 	"/usr/sbin/zfs",
 	"/sbin/zfs",
 	"/usr/local/sbin/zfs",
@@ -642,7 +633,6 @@ static const char* const zfs_paths[] = {
 #ifdef __APPLE__
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/zfs",
-#endif
 #endif
 	0
 };
@@ -658,10 +648,6 @@ static const char* find_zfs(void)
 }
 
 static const char* const zpool_paths[] = {
-#ifdef ZPOOL_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	ZPOOL_PATH,
-#else
 	"/usr/sbin/zpool",
 	"/sbin/zpool",
 	"/usr/local/sbin/zpool",
@@ -671,7 +657,6 @@ static const char* const zpool_paths[] = {
 #ifdef __APPLE__
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/zpool",
-#endif
 #endif
 	0
 };
@@ -785,10 +770,6 @@ const char* stat_desc(struct stat* st)
 #if HAVE_LINUX_DEVICE
 
 static const char* smartctl_paths[] = {
-#ifdef SMARTCTL_PATH
-	/* Path configured at build time (e.g. on NixOS). */
-	SMARTCTL_PATH,
-#else
 	/* Linux & BSD */
 	"/usr/sbin/smartctl",
 	"/sbin/smartctl",
@@ -798,7 +779,6 @@ static const char* smartctl_paths[] = {
 #ifdef __APPLE__
 	/* macOS (Intel & Apple Silicon) */
 	"/opt/homebrew/sbin/smartctl",
-#endif
 #endif
 	0
 };
@@ -4453,4 +4433,3 @@ int devmap(void)
 }
 
 #endif
-
